@@ -19,8 +19,17 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true, select: true },
     role: {
       type: String,
-      enum: ['admin', 'assistant', 'student', 'parent'],
+      enum: ['super_admin', 'admin', 'assistant', 'student', 'parent'],
       required: true
+    },
+    tenantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Tenant',
+      default: null,
+      index: true,
+      required: function () {
+        return this.role !== 'super_admin';
+      }
     },
     stage: {
       type: String,
@@ -45,6 +54,7 @@ const userSchema = new mongoose.Schema(
     childId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     parentAccessCode: { type: String, unique: true, sparse: true },
     walletBalance: { type: Number, default: 0 },
+    avatarUrl: { type: String, default: null },
     themePreference: { type: String, enum: ['light', 'dark'], default: 'light' },
     isActive: { type: Boolean, default: true },
     // NEW (this batch) — only meaningful for role === 'admin'. Paymob
@@ -62,19 +72,18 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('passwordHash')) return next();
+userSchema.pre('save', async function () {
+  if (!this.isModified('passwordHash')) return;
   try {
     const salt = await bcrypt.genSalt(12);
     this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
-    next();
   } catch (err) {
-    next(err);
+    throw err;
   }
 });
 
-userSchema.pre('save', async function (next) {
-  if (this.role !== 'student' || this.parentAccessCode) return next();
+userSchema.pre('save', async function () {
+  if (this.role !== 'student' || this.parentAccessCode) return;
 
   const generate = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -98,11 +107,10 @@ userSchema.pre('save', async function (next) {
   }
 
   if (exists) {
-    return next(new Error('Failed to generate a unique parent access code, please retry'));
+    throw new Error('Failed to generate a unique parent access code, please retry');
   }
 
   this.parentAccessCode = code;
-  next();
 });
 
 userSchema.methods.comparePassword = function (candidate) {

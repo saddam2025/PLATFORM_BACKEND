@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 // LectureAccess documents exist yet — that is expected, not a bug.
 const lectureAccessSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
     purchasedAt: { type: Date, default: Date.now },

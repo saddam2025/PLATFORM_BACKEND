@@ -19,6 +19,10 @@ async function getOptionalUser(req) {
   }
 }
 
+async function resolveInstructorTenant(instructorId) {
+  return User.findOne({ _id: instructorId, role: 'admin' }).select('tenantId').lean();
+}
+
 function isOwnerOfInstructor(user, instructorId) {
   if (!user) return false;
   if (user.role === 'admin') return String(user._id) === String(instructorId);
@@ -61,12 +65,12 @@ exports.createCourse = async (req, res, next) => {
       return res.status(400).json({ message: 'العنوان والمرحلة والتصنيف مطلوبة' });
     }
 
-    let categoryDoc = await Category.findOne({ name: category, instructorId, stage });
+    let categoryDoc = await Category.findOne({ name: category, instructorId, stage, ...req.tenantFilter });
     if (!categoryDoc) {
-      categoryDoc = await Category.create({ name: category, instructorId, stage });
+      categoryDoc = await Category.create({ tenantId: req.user.tenantId, name: category, instructorId, stage });
     }
 
-    const existingCount = await Course.countDocuments({ instructorId, stage, categoryId: categoryDoc._id });
+    const existingCount = await Course.countDocuments({ instructorId, stage, categoryId: categoryDoc._id, ...req.tenantFilter });
     const order = existingCount + 1;
 
     const thumbnailUrl = req.files?.thumbnail?.[0]
@@ -82,6 +86,7 @@ exports.createCourse = async (req, res, next) => {
     const isPublishedBool = isPublished === 'true' || isPublished === true;
 
     const course = await Course.create({
+      tenantId: req.user.tenantId,
       title_en,
       title_ar,
       description_en,
@@ -101,7 +106,9 @@ exports.createCourse = async (req, res, next) => {
 
     if (questions.length > 0) {
       const quiz = await Quiz.create({
+        tenantId: req.user.tenantId,
         courseId: course._id,
+        instructorId,
         type: 'lecture',
         questions
       });
@@ -116,6 +123,7 @@ exports.createCourse = async (req, res, next) => {
     // anyone, since it isn't visible to students yet anyway.
     if (isPublishedBool) {
       await createNotificationsForAudience({
+        tenantId: req.user.tenantId,
         instructorId,
         type: 'new_course',
         title: 'دورة جديدة',
@@ -138,13 +146,15 @@ exports.listCourses = async (req, res, next) => {
 
     const requester = await getOptionalUser(req);
     const isOwner = isOwnerOfInstructor(requester, instructorId);
+    const instructor = await resolveInstructorTenant(instructorId);
+    if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
 
-    const filter = { instructorId };
+    const filter = { instructorId, tenantId: instructor.tenantId };
     if (stage) filter.stage = stage;
     if (!isOwner) filter.isPublished = true;
 
     if (category) {
-      const categoryDoc = await Category.findOne({ name: category, instructorId, stage: stage || undefined });
+      const categoryDoc = await Category.findOne({ name: category, instructorId, stage: stage || undefined, tenantId: instructor.tenantId });
       filter.categoryId = categoryDoc ? categoryDoc._id : null;
     }
 
@@ -161,8 +171,10 @@ exports.getCourse = async (req, res, next) => {
 
     const requester = await getOptionalUser(req);
     const isOwner = isOwnerOfInstructor(requester, instructorId);
+    const instructor = await resolveInstructorTenant(instructorId);
+    if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
 
-    const course = await Course.findOne({ _id: courseId, instructorId }).populate('categoryId', 'name');
+    const course = await Course.findOne({ _id: courseId, instructorId, tenantId: instructor.tenantId }).populate('categoryId', 'name');
     if (!course) {
       return res.status(404).json({ message: 'الدورة غير موجودة' });
     }
@@ -178,7 +190,8 @@ exports.getCourse = async (req, res, next) => {
         instructorId,
         stage: course.stage,
         categoryId: course.categoryId,
-        order: { $lt: course.order }
+        order: { $lt: course.order },
+        tenantId: course.tenantId
       }).sort({ order: -1 });
 
       if (!precedingCourse) {
@@ -186,7 +199,8 @@ exports.getCourse = async (req, res, next) => {
       } else {
         const progress = await LectureProgress.findOne({
           studentId: requester._id,
-          courseId: precedingCourse._id
+          courseId: precedingCourse._id,
+          tenantId: course.tenantId
         });
         const unlocked = !!(progress && progress.homeworkCompleted && progress.quizPassed);
         responseData.locked = !unlocked;
@@ -207,7 +221,7 @@ exports.updateCourse = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بتعديل دورات هذا الحساب' });
     }
 
-    const course = await Course.findOne({ _id: courseId, instructorId });
+    const course = await Course.findOne({ _id: courseId, instructorId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'الدورة غير موجودة' });
     }
@@ -237,10 +251,12 @@ exports.updateCourse = async (req, res, next) => {
       let categoryDoc = await Category.findOne({
         name: req.body.category,
         instructorId,
-        stage: req.body.stage || course.stage
+        stage: req.body.stage || course.stage,
+        ...req.tenantFilter
       });
       if (!categoryDoc) {
         categoryDoc = await Category.create({
+          tenantId: req.user.tenantId,
           name: req.body.category,
           instructorId,
           stage: req.body.stage || course.stage
@@ -267,6 +283,7 @@ exports.updateCourse = async (req, res, next) => {
     // feature #13's notification.
     if (!wasPublished && course.isPublished) {
       await createNotificationsForAudience({
+        tenantId: req.user.tenantId,
         instructorId,
         type: 'new_course',
         title: 'دورة جديدة',
@@ -290,13 +307,13 @@ exports.deleteCourse = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بحذف دورات هذا الحساب' });
     }
 
-    const course = await Course.findOneAndDelete({ _id: courseId, instructorId });
+    const course = await Course.findOneAndDelete({ _id: courseId, instructorId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'الدورة غير موجودة' });
     }
 
     if (course.quizId) {
-      await Quiz.findByIdAndDelete(course.quizId);
+      await Quiz.deleteOne({ _id: course.quizId, ...req.tenantFilter });
     }
 
     res.json({ message: 'تم حذف الدورة بنجاح' });
@@ -310,7 +327,9 @@ exports.listCategories = async (req, res, next) => {
     const { instructorId } = req.params;
     const { stage } = req.query;
 
-    const filter = { instructorId };
+    const instructor = await resolveInstructorTenant(instructorId);
+    if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
+    const filter = { instructorId, tenantId: instructor.tenantId };
     if (stage) filter.stage = stage;
 
     const categories = await Category.find(filter);

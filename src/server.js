@@ -62,6 +62,7 @@ app.use('/api/v1', require('./routes/paymentRoutes'));
 // (future prompts will add: app.use('/api/v1/auth', authRoutes); etc.)
 app.use('/api/v1/auth', require('./routes/authRoutes'));
 app.use('/api/v1/instructors', require('./routes/userRoutes'));
+app.use('/api/v1/super-admin', require('./routes/superAdminRoutes'));
 app.get('/api/v1/health', (req, res) => {
   res.json({ status: 'ok' });
 });

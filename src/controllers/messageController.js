@@ -11,9 +11,14 @@ exports.sendMessage = async (req, res, next) => {
       return res.status(400).json({ message: 'جميع الحقول مطلوبة' });
     }
 
-    const student = await User.findOne({ _id: studentId, role: 'student' });
+    const student = await User.findOne({ _id: studentId, role: 'student', ...req.tenantFilter });
     if (!student) {
       return res.status(404).json({ message: 'الطالب غير موجود' });
+    }
+
+    const recipient = await User.findOne({ _id: toUserId, ...req.tenantFilter });
+    if (!recipient) {
+      return res.status(404).json({ message: 'المستلم غير موجود' });
     }
 
     // Ownership/scope check per sender role:
@@ -35,6 +40,7 @@ exports.sendMessage = async (req, res, next) => {
     }
 
     const message = await Message.create({
+      tenantId: req.user.tenantId,
       fromUserId: req.user._id,
       toUserId,
       instructorId: student.instructorId,
@@ -54,7 +60,7 @@ exports.getThread = async (req, res, next) => {
   try {
     const { studentId } = req.params;
 
-    const student = await User.findOne({ _id: studentId, role: 'student' });
+    const student = await User.findOne({ _id: studentId, role: 'student', ...req.tenantFilter });
     if (!student) {
       return res.status(404).json({ message: 'الطالب غير موجود' });
     }
@@ -74,7 +80,7 @@ exports.getThread = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بعرض هذه المحادثة' });
     }
 
-    const messages = await Message.find({ studentId }).sort({ createdAt: 1 });
+    const messages = await Message.find({ studentId, ...req.tenantFilter }).sort({ createdAt: 1 });
     res.json({ data: messages });
   } catch (err) {
     next(err);
@@ -86,7 +92,7 @@ exports.getThread = async (req, res, next) => {
 // received message as read.
 exports.markMessageRead = async (req, res, next) => {
   try {
-    const message = await Message.findById(req.params.id);
+    const message = await Message.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!message) {
       return res.status(404).json({ message: 'الرسالة غير موجودة' });
     }

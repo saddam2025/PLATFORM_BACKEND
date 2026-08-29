@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
-const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework' };
+const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', avatar: 'avatars' };
 
 // Ensure target directories exist at startup — avoids runtime ENOENT errors
 // on first upload in a fresh environment.
@@ -18,6 +18,7 @@ function destinationForField(fieldname) {
   if (fieldname === 'video') return SUBDIRS.video;
   if (fieldname === 'thumbnail') return SUBDIRS.thumbnail;
   if (fieldname === 'homework') return SUBDIRS.homework;
+  if (fieldname === 'avatar') return SUBDIRS.avatar;
   return null;
 }
 
@@ -31,7 +32,14 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname);
+    const avatarExtensions = {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp'
+    };
+    const ext = file.fieldname === 'avatar'
+      ? avatarExtensions[file.mimetype]
+      : path.extname(file.originalname);
     cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
   }
 });
@@ -61,6 +69,12 @@ const fileFilter = (req, file, cb) => {
     return cb(new Error('Invalid file type for homework field: only PDF/DOC/DOCX allowed'), false);
   }
 
+  if (field === 'avatar') {
+    const allowedAvatarMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowedAvatarMimes.includes(file.mimetype)) return cb(null, true);
+    return cb(new Error('Invalid file type for avatar field: only JPEG, PNG, and WebP images allowed'), false);
+  }
+
   return cb(new Error(`Unexpected upload field: ${field}`), false);
 };
 
@@ -79,4 +93,25 @@ const uploadGeneral = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB — thumbnails, homework
 });
 
-module.exports = { uploadVideo, uploadGeneral };
+const avatarMulter = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 3 * 1024 * 1024 }
+});
+
+// Keeps Multer-specific failures out of the generic 500 error path and
+// drops unrelated multipart fields; this endpoint accepts only `avatar`.
+const uploadAvatar = (req, res, next) => {
+  avatarMulter.single('avatar')(req, res, (err) => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Avatar image must be 3MB or smaller'
+        : err.message || 'Invalid avatar upload';
+      return res.status(400).json({ message });
+    }
+    req.body = {};
+    next();
+  });
+};
+
+module.exports = { uploadVideo, uploadGeneral, uploadAvatar };

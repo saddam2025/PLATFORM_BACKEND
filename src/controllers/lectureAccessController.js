@@ -15,7 +15,7 @@ exports.startView = async (req, res, next) => {
   try {
     const { courseId } = req.params;
 
-    const access = await LectureAccess.findOne({ studentId: req.user._id, courseId });
+    const access = await LectureAccess.findOne({ studentId: req.user._id, courseId, ...req.tenantFilter });
     if (!access) {
       return res.status(404).json({ message: 'لم يتم شراء هذه المحاضرة' });
     }
@@ -28,7 +28,7 @@ exports.startView = async (req, res, next) => {
       return res.status(403).json({ message: 'لقد استنفدت عدد مرات المشاهدة المسموحة' });
     }
 
-    const course = await Course.findById(courseId);
+    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }
@@ -73,10 +73,16 @@ exports.updateWatchProgress = async (req, res, next) => {
       return res.status(400).json({ message: 'بيانات التقدم غير صالحة' });
     }
 
-    let progress = await VideoProgress.findOne({ studentId: req.user._id, courseId });
+    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter }).select('_id');
+    if (!course) {
+      return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    }
+
+    let progress = await VideoProgress.findOne({ studentId: req.user._id, courseId, ...req.tenantFilter });
 
     if (!progress) {
       progress = new VideoProgress({
+        tenantId: req.user.tenantId,
         studentId: req.user._id,
         courseId,
         watchedSeconds: 0,
@@ -123,7 +129,11 @@ exports.updateWatchProgress = async (req, res, next) => {
 exports.getWatchProgress = async (req, res, next) => {
   try {
     const { courseId } = req.params;
-    const progress = await VideoProgress.findOne({ studentId: req.user._id, courseId });
+    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter }).select('_id');
+    if (!course) {
+      return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    }
+    const progress = await VideoProgress.findOne({ studentId: req.user._id, courseId, ...req.tenantFilter });
     res.json({ data: progress || null });
   } catch (err) {
     next(err);

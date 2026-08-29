@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const reelSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     videoUrl: { type: String, required: true },

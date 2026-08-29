@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const scratchCardSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     // NEVER the plaintext code — only its hash. See utils/generateCode.js
     // for why plaintext is never persisted anywhere.
     code_hash: { type: String, required: true, unique: true },

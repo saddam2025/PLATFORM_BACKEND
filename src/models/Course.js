@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const courseSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     title_en: { type: String, default: '' },
     title_ar: { type: String, required: true },
     description_en: { type: String, default: '' },

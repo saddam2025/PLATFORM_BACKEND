@@ -25,7 +25,7 @@ function stripAnswerKey(quiz) {
 // GET /api/v1/quizzes/:quizId
 exports.getQuiz = async (req, res, next) => {
   try {
-    const quiz = await Quiz.findById(req.params.quizId);
+    const quiz = await Quiz.findOne({ _id: req.params.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
     res.json({ data: stripAnswerKey(quiz) });
   } catch (err) {
@@ -48,12 +48,13 @@ exports.submitQuiz = async (req, res, next) => {
 
     // Load the FULL quiz server-side including the answer key — never trust
     // a client-supplied answer key or score.
-    const quiz = await Quiz.findById(quizId);
+    const quiz = await Quiz.findOne({ _id: quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
 
     const { score, passed, incorrectQuestionIndexes } = gradeSubmission(quiz, answers);
 
     const submission = await QuizSubmission.create({
+      tenantId: req.user.tenantId,
       quizId: quiz._id,
       studentId: req.user._id,
       answers,
@@ -69,8 +70,8 @@ exports.submitQuiz = async (req, res, next) => {
     // unlocking is computed or stored here.
     if (quiz.courseId && passed) {
       await LectureProgress.findOneAndUpdate(
-        { studentId: req.user._id, courseId: quiz.courseId },
-        { $set: { quizPassed: true } },
+        { studentId: req.user._id, courseId: quiz.courseId, ...req.tenantFilter },
+        { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId } },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
@@ -110,15 +111,15 @@ function canViewSubmission(user, submission, instructorIdOfQuiz) {
 // belonging to the instructor that owns the underlying course/quiz.
 exports.getSubmission = async (req, res, next) => {
   try {
-    const submission = await QuizSubmission.findById(req.params.submissionId);
+    const submission = await QuizSubmission.findOne({ _id: req.params.submissionId, ...req.tenantFilter });
     if (!submission) return res.status(404).json({ message: 'المحاولة غير موجودة' });
 
-    const quiz = await Quiz.findById(submission.quizId);
+    const quiz = await Quiz.findOne({ _id: submission.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
 
     let instructorIdOfQuiz = quiz.instructorId;
     if (!instructorIdOfQuiz && quiz.courseId) {
-      const course = await Course.findById(quiz.courseId);
+      const course = await Course.findOne({ _id: quiz.courseId, ...req.tenantFilter });
       instructorIdOfQuiz = course ? course.instructorId : null;
     }
 
@@ -140,14 +141,14 @@ exports.getSubmission = async (req, res, next) => {
 // incorrect questions from the original attempt, WITHOUT answer keys.
 exports.getRetryQuiz = async (req, res, next) => {
   try {
-    const original = await QuizSubmission.findById(req.params.submissionId);
+    const original = await QuizSubmission.findOne({ _id: req.params.submissionId, ...req.tenantFilter });
     if (!original) return res.status(404).json({ message: 'المحاولة غير موجودة' });
 
     if (String(original.studentId) !== String(req.user._id)) {
       return res.status(403).json({ message: 'غير مصرح لك بإعادة محاولة هذا الاختبار' });
     }
 
-    const quiz = await Quiz.findById(original.quizId);
+    const quiz = await Quiz.findOne({ _id: original.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
 
     // originalIndex is carried along so submitRetry can map submitted
@@ -174,7 +175,7 @@ exports.getRetryQuiz = async (req, res, next) => {
 exports.submitRetry = async (req, res, next) => {
   try {
     const { answers } = req.body;
-    const original = await QuizSubmission.findById(req.params.submissionId);
+    const original = await QuizSubmission.findOne({ _id: req.params.submissionId, ...req.tenantFilter });
     if (!original) return res.status(404).json({ message: 'المحاولة غير موجودة' });
 
     if (String(original.studentId) !== String(req.user._id)) {
@@ -185,7 +186,7 @@ exports.submitRetry = async (req, res, next) => {
       return res.status(400).json({ message: 'إجابات غير صالحة' });
     }
 
-    const quiz = await Quiz.findById(original.quizId);
+    const quiz = await Quiz.findOne({ _id: original.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
 
     const stillIncorrectOriginalIndexes = [];
@@ -211,6 +212,7 @@ exports.submitRetry = async (req, res, next) => {
     const fullyCorrectOnRetry = stillIncorrectOriginalIndexes.length === 0;
 
     const retrySubmission = await QuizSubmission.create({
+      tenantId: req.user.tenantId,
       quizId: quiz._id,
       studentId: req.user._id,
       answers,
@@ -231,8 +233,8 @@ exports.submitRetry = async (req, res, next) => {
 
       if (quiz.courseId) {
         await LectureProgress.findOneAndUpdate(
-          { studentId: req.user._id, courseId: quiz.courseId },
-          { $set: { quizPassed: true } },
+          { studentId: req.user._id, courseId: quiz.courseId, ...req.tenantFilter },
+          { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId } },
           { upsert: true, new: true, setDefaultsOnInsert: true }
         );
       }

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const accessCodeSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     // Same hashing approach as ScratchCard — never store the plaintext.
     code_hash: { type: String, required: true, unique: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },

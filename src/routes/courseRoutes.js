@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
+const tenantScope = require('../middlewares/tenantScope.middleware');
 const { uploadVideo } = require('../middlewares/uploadMiddleware');
 const {
   createCourse,
@@ -29,6 +30,7 @@ const uploadFields = uploadVideo.fields([
 router.post(
   '/:instructorId/courses',
   protect,
+  tenantScope,
   authorize('admin', 'assistant'),
   uploadFields,
   gateVideoUpload,
@@ -41,13 +43,14 @@ router.get('/:instructorId/courses/:courseId', getCourse); // public, optional-a
 router.patch(
   '/:instructorId/courses/:courseId',
   protect,
+  tenantScope,
   authorize('admin', 'assistant'),
   uploadFields,
   updateCourse
 );
 
 // Admin only — see deleteCourse's inline comment for the reasoning.
-router.delete('/:instructorId/courses/:courseId', protect, authorize('admin'), deleteCourse);
+router.delete('/:instructorId/courses/:courseId', protect, tenantScope, authorize('admin'), deleteCourse);
 
 router.get('/:instructorId/categories', listCategories);
 

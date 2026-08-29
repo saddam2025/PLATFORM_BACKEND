@@ -11,12 +11,17 @@ exports.createAssistant = async (req, res, next) => {
     const { instructorId } = req.params;
     const { name, email, permissions } = req.body;
 
-    if (String(req.user._id) !== String(instructorId)) {
+    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بإضافة مساعدين لهذا الحساب' });
     }
 
     if (!name || !email) {
       return res.status(400).json({ message: 'الاسم والبريد الإلكتروني مطلوبان' });
+    }
+
+    const instructor = await User.findOne({ _id: instructorId, role: 'admin', ...req.tenantFilter }).select('tenantId');
+    if (!instructor?.tenantId) {
+      return res.status(404).json({ message: 'المدرس غير موجود' });
     }
 
     const existing = await User.findOne({ email: email.toLowerCase() });
@@ -27,6 +32,7 @@ exports.createAssistant = async (req, res, next) => {
     const inviteToken = crypto.randomBytes(24).toString('hex');
 
     const assistant = new User({
+      tenantId: instructor.tenantId,
       name,
       email: email.toLowerCase(),
       // No password yet — set only via accept-invite. A random placeholder
@@ -57,11 +63,11 @@ exports.listAssistants = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
 
-    if (String(req.user._id) !== String(instructorId)) {
+    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بعرض مساعدي هذا الحساب' });
     }
 
-    const assistants = await User.find({ instructorId, role: 'assistant' });
+    const assistants = await User.find({ instructorId, role: 'assistant', ...req.tenantFilter });
     res.json({ data: assistants });
   } catch (err) {
     next(err);
@@ -75,13 +81,13 @@ exports.updateAssistantPermissions = async (req, res, next) => {
     const { instructorId, assistantId } = req.params;
     const { permissions } = req.body;
 
-    if (String(req.user._id) !== String(instructorId)) {
+    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بتعديل مساعدي هذا الحساب' });
     }
 
     // BOLA check on the target resource itself: the assistant being updated
     // must actually belong to this instructor's tenant, not just any user id.
-    const assistant = await User.findOne({ _id: assistantId, instructorId, role: 'assistant' });
+    const assistant = await User.findOne({ _id: assistantId, instructorId, role: 'assistant', ...req.tenantFilter });
     if (!assistant) {
       return res.status(404).json({ message: 'المساعد غير موجود' });
     }

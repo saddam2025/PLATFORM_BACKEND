@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middlewares/authMiddleware');
+const tenantScope = require('../middlewares/tenantScope.middleware');
 const { startCourseCheckout, handlePaymobWebhook } = require('../controllers/paymentController');
 
-router.post('/courses/:courseId/checkout/paymob', protect, authorize('student'), startCourseCheckout);
+router.post('/courses/:courseId/checkout/paymob', protect, tenantScope, authorize('student'), startCourseCheckout);
 
 // PUBLIC — Paymob calls this directly, no protect() middleware. The HMAC
 // check inside handlePaymobWebhook is the ONLY authentication boundary this

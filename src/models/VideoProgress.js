@@ -10,6 +10,7 @@ const watchHistoryEntrySchema = new mongoose.Schema(
 
 const videoProgressSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
     watchedSeconds: { type: Number, default: 0 }, // furthest position ever reached

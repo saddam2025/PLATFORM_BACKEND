@@ -17,11 +17,11 @@ exports.exportStudents = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بتصدير بيانات هذا الحساب' });
     }
 
-    const students = await User.find({ instructorId, role: 'student' }).lean();
+    const students = await User.find({ instructorId, role: 'student', ...req.tenantFilter }).lean();
 
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const subscriptions = await Subscription.find({ instructorId, month: currentMonth }).lean();
+    const subscriptions = await Subscription.find({ instructorId, month: currentMonth, ...req.tenantFilter }).lean();
     const subStatusMap = new Map(subscriptions.map((s) => [String(s.studentId), s.status]));
 
     const columns = ['name', 'email', 'phone', 'stage', 'walletBalance', 'subscriptionStatus', 'joinedAt'];

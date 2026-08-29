@@ -35,7 +35,7 @@ exports.getCurrentSubscription = async (req, res, next) => {
     }
 
     const month = currentMonthString();
-    const subscription = await Subscription.findOne({ studentId, stage, month });
+    const subscription = await Subscription.findOne({ studentId, stage, month, ...req.tenantFilter });
 
     if (!subscription) {
       return res.status(404).json({ message: 'لا يوجد اشتراك حالي لهذا الشهر' });
@@ -67,6 +67,9 @@ exports.createSubscription = async (req, res, next) => {
       return res.status(400).json({ message: 'المدرس والمرحلة مطلوبان' });
     }
 
+    const instructor = await User.findOne({ _id: instructorId, role: 'admin', ...req.tenantFilter });
+    if (!instructor) return res.status(404).json({ message: 'المدرس غير موجود' });
+
     const month = currentMonthString();
     const prevMonth = previousMonthString(month);
 
@@ -75,13 +78,14 @@ exports.createSubscription = async (req, res, next) => {
       instructorId,
       stage,
       month: prevMonth
+      , ...req.tenantFilter
     });
 
     if (prevSubscription && !prevSubscription.monthlyExamPassed) {
       return res.status(403).json({ message: 'يجب اجتياز اختبار الشهر السابق أولاً' });
     }
 
-    const existing = await Subscription.findOne({ studentId: req.user._id, instructorId, stage, month });
+    const existing = await Subscription.findOne({ studentId: req.user._id, instructorId, stage, month, ...req.tenantFilter });
     if (existing) {
       return res.status(400).json({ message: 'يوجد اشتراك بالفعل لهذا الشهر' });
     }
@@ -91,6 +95,7 @@ exports.createSubscription = async (req, res, next) => {
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     const subscription = await Subscription.create({
+      tenantId: req.user.tenantId,
       studentId: req.user._id,
       instructorId,
       stage,
@@ -111,7 +116,7 @@ exports.submitMonthlyExam = async (req, res, next) => {
     const { subscriptionId } = req.params;
     const { answers } = req.body;
 
-    const subscription = await Subscription.findById(subscriptionId);
+    const subscription = await Subscription.findOne({ _id: subscriptionId, ...req.tenantFilter });
     if (!subscription) return res.status(404).json({ message: 'الاشتراك غير موجود' });
 
     if (String(subscription.studentId) !== String(req.user._id)) {
@@ -126,7 +131,9 @@ exports.submitMonthlyExam = async (req, res, next) => {
       type: 'monthly_exam',
       instructorId: subscription.instructorId,
       stage: subscription.stage,
-      month: subscription.month
+      month: subscription.month,
+      ...req.tenantFilter
+      , ...req.tenantFilter
     });
 
     if (!quiz) {
@@ -137,6 +144,7 @@ exports.submitMonthlyExam = async (req, res, next) => {
       gradeSubmission(quiz, answers);
 
     const submission = await QuizSubmission.create({
+      tenantId: req.user.tenantId,
       quizId: quiz._id,
       studentId: req.user._id,
       answers,
@@ -178,6 +186,9 @@ exports.checkoutSubscription = async (req, res, next) => {
       return res.status(400).json({ message: 'بيانات الدفع غير مكتملة' });
     }
 
+    const instructor = await User.findOne({ _id: instructorId, role: 'admin', ...req.tenantFilter });
+    if (!instructor) return res.status(404).json({ message: 'المدرس غير موجود' });
+
     const month = currentMonthString();
     const prevMonth = previousMonthString(month);
 
@@ -188,6 +199,7 @@ exports.checkoutSubscription = async (req, res, next) => {
       instructorId,
       stage: stageId,
       month: prevMonth
+      , ...req.tenantFilter
     });
     if (prevSubscription && !prevSubscription.monthlyExamPassed) {
       return res.status(403).json({ message: 'يجب اجتياز اختبار الشهر السابق أولاً' });
@@ -198,6 +210,7 @@ exports.checkoutSubscription = async (req, res, next) => {
       instructorId,
       stage: stageId,
       month
+      , ...req.tenantFilter
     });
     if (existing) {
       return res.status(400).json({ message: 'يوجد اشتراك بالفعل لهذا الشهر' });
@@ -208,7 +221,7 @@ exports.checkoutSubscription = async (req, res, next) => {
       // earlier (via scratchCardController.redeemScratchCard) and is now
       // spending wallet balance, not redeeming a code inline here — this
       // endpoint only checks and deducts the balance.
-      const student = await User.findById(req.user._id);
+      const student = await User.findOne({ _id: req.user._id, ...req.tenantFilter });
       if (student.walletBalance < MONTHLY_SUBSCRIPTION_PRICE) {
         return res.status(400).json({ message: 'رصيد المحفظة غير كافٍ' });
       }
@@ -217,6 +230,7 @@ exports.checkoutSubscription = async (req, res, next) => {
       await student.save();
 
       await Transaction.create({
+        tenantId: req.user.tenantId,
         userId: req.user._id,
         type: 'purchase',
         source: 'wallet',
@@ -229,6 +243,7 @@ exports.checkoutSubscription = async (req, res, next) => {
       expiresAt.setDate(expiresAt.getDate() + 30);
 
       const subscription = await Subscription.create({
+        tenantId: req.user.tenantId,
         studentId: req.user._id,
         instructorId,
         stage: stageId,

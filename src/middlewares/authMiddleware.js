@@ -48,7 +48,7 @@ const protect = async (req, res, next) => {
 // role-specific route MUST wrap with this.
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || (req.user.role !== 'super_admin' && !roles.includes(req.user.role))) {
       return res.status(403).json({ message: 'Forbidden: insufficient role' });
     }
     next();
@@ -64,7 +64,7 @@ const requirePermission = (permissionName) => {
     if (!req.user) {
       return res.status(403).json({ message: 'Forbidden' });
     }
-    if (req.user.role === 'admin') {
+    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
       return next();
     }
     if (req.user.role === 'assistant' && Array.isArray(req.user.permissions) && req.user.permissions.includes(permissionName)) {

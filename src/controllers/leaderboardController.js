@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const User = require('../models/User');
 
 // GET /api/v1/instructors/:instructorId/leaderboard?stage=
 // Public route — LeaderboardPage.jsx has auth:null, visible to
@@ -18,9 +19,15 @@ exports.getLeaderboard = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
     const { stage } = req.query;
+    if (!mongoose.isValidObjectId(instructorId)) {
+      return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    }
     const instructorObjectId = new mongoose.Types.ObjectId(instructorId);
+    const instructor = await User.findOne({ _id: instructorObjectId, role: 'admin', isActive: true }).select('tenantId').lean();
+    if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
+    const tenantObjectId = new mongoose.Types.ObjectId(instructor.tenantId);
 
-    const studentMatch = { instructorId: instructorObjectId, role: 'student' };
+    const studentMatch = { instructorId: instructorObjectId, role: 'student', tenantId: tenantObjectId };
     if (stage) studentMatch.stage = stage;
 
     // Exam averages: join QuizSubmission -> User (student), filtered to this
@@ -32,8 +39,11 @@ exports.getLeaderboard = async (req, res, next) => {
         {
           $lookup: {
             from: 'quizsubmissions',
-            localField: '_id',
-            foreignField: 'studentId',
+            let: { studentId: '$_id' },
+            pipeline: [{ $match: { $expr: { $and: [
+              { $eq: ['$studentId', '$$studentId'] },
+              { $eq: ['$tenantId', tenantObjectId] }
+            ] } } }],
             as: 'submissions'
           }
         },
@@ -60,8 +70,11 @@ exports.getLeaderboard = async (req, res, next) => {
         {
           $lookup: {
             from: 'assignments',
-            localField: '_id',
-            foreignField: 'studentId',
+            let: { studentId: '$_id' },
+            pipeline: [{ $match: { $expr: { $and: [
+              { $eq: ['$studentId', '$$studentId'] },
+              { $eq: ['$tenantId', tenantObjectId] }
+            ] } } }],
             as: 'assignments'
           }
         },

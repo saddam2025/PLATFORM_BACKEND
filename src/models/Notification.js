@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     recipientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     type: { type: String, enum: ['new_course', 'new_reel', 'exam_result', 'message'], required: true },

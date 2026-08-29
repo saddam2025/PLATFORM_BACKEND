@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const quizSubmissionSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     quizId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quiz', required: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     answers: { type: [Number], required: true },

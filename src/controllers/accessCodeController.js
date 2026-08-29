@@ -23,7 +23,7 @@ exports.generateAccessCodes = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بتوليد أكواد لهذا الحساب' });
     }
 
-    const course = await Course.findOne({ _id: courseId, instructorId });
+    const course = await Course.findOne({ _id: courseId, instructorId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }
@@ -37,6 +37,7 @@ exports.generateAccessCodes = async (req, res, next) => {
     const { plaintextCodes, hashedCodes } = generateBatch(n);
 
     const docs = hashedCodes.map((hash) => ({
+      tenantId: req.user.tenantId,
       code_hash: hash,
       courseId,
       instructorId,
@@ -73,7 +74,7 @@ exports.redeemAccessCode = async (req, res, next) => {
     }
 
     const hash = hashCode(code.trim());
-    const accessCode = await AccessCode.findOne({ code_hash: hash });
+    const accessCode = await AccessCode.findOne({ code_hash: hash, ...req.tenantFilter });
 
     // Same deliberate generic error for "doesn't exist" / "already
     // redeemed" / "wrong instructor" — no information leak via error
@@ -82,7 +83,7 @@ exports.redeemAccessCode = async (req, res, next) => {
       return res.status(400).json(GENERIC_ERROR);
     }
 
-    const course = await Course.findById(accessCode.courseId);
+    const course = await Course.findOne({ _id: accessCode.courseId, ...req.tenantFilter });
     if (!course) {
       return res.status(400).json(GENERIC_ERROR);
     }
@@ -104,9 +105,10 @@ exports.redeemAccessCode = async (req, res, next) => {
     // upsert here makes redeeming a second, different code for a course
     // already owned a safe no-op rather than an unhandled 500).
     await LectureAccess.findOneAndUpdate(
-      { studentId: req.user._id, courseId: course._id },
+      { studentId: req.user._id, courseId: course._id, ...req.tenantFilter },
       {
         $setOnInsert: {
+          tenantId: req.user.tenantId,
           purchasedAt,
           expiresAt,
           maxViews: course.maxViews,
@@ -117,6 +119,7 @@ exports.redeemAccessCode = async (req, res, next) => {
     );
 
     await Transaction.create({
+      tenantId: req.user.tenantId,
       userId: req.user._id,
       type: 'purchase',
       source: 'access_code',

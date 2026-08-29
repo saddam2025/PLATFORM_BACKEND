@@ -8,11 +8,11 @@ exports.listNotifications = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     const [notifications, total] = await Promise.all([
-      Notification.find({ recipientId: req.user._id })
+      Notification.find({ recipientId: req.user._id, ...req.tenantFilter })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Notification.countDocuments({ recipientId: req.user._id })
+      Notification.countDocuments({ recipientId: req.user._id, ...req.tenantFilter })
     ]);
 
     res.json({
@@ -27,7 +27,7 @@ exports.listNotifications = async (req, res, next) => {
 // GET /api/v1/notifications/unread-count
 exports.getUnreadCount = async (req, res, next) => {
   try {
-    const count = await Notification.countDocuments({ recipientId: req.user._id, read: false });
+    const count = await Notification.countDocuments({ recipientId: req.user._id, read: false, ...req.tenantFilter });
     res.json({ data: { count } });
   } catch (err) {
     next(err);
@@ -37,7 +37,7 @@ exports.getUnreadCount = async (req, res, next) => {
 // PATCH /api/v1/notifications/:id/read
 exports.markRead = async (req, res, next) => {
   try {
-    const notification = await Notification.findById(req.params.id);
+    const notification = await Notification.findOne({ _id: req.params.id, ...req.tenantFilter });
     if (!notification) {
       return res.status(404).json({ message: 'الإشعار غير موجود' });
     }
@@ -59,7 +59,7 @@ exports.markRead = async (req, res, next) => {
 exports.markAllRead = async (req, res, next) => {
   try {
     await Notification.updateMany(
-      { recipientId: req.user._id, read: false },
+      { recipientId: req.user._id, read: false, ...req.tenantFilter },
       { $set: { read: true } }
     );
     res.json({ message: 'تم تعليم جميع الإشعارات كمقروءة' });

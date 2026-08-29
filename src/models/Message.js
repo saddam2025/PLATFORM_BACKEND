@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     fromUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     toUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

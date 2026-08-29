@@ -19,7 +19,7 @@ exports.getStudentProfile = async (req, res, next) => {
     //    belonging to Instructor A must never be able to view a student
     //    belonging to Instructor B, even if they happen to guess a valid
     //    studentId.
-    const student = await User.findOne({ _id: studentId, role: 'student', instructorId });
+    const student = await User.findOne({ _id: studentId, role: 'student', instructorId, ...req.tenantFilter });
     if (!student) {
       return res.status(404).json({ message: 'الطالب غير موجود' });
     }
@@ -35,9 +35,9 @@ exports.getStudentProfile = async (req, res, next) => {
     // Three independent queries — run in parallel via Promise.all rather
     // than sequential awaits, since none of them depend on each other's result.
     const [quizSubmissions, videoProgress, assignments] = await Promise.all([
-      QuizSubmission.find({ studentId }).sort({ submittedAt: -1 }).lean(),
-      VideoProgress.find({ studentId }).lean(),
-      Assignment.find({ studentId }).sort({ submittedAt: -1 }).lean()
+      QuizSubmission.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean(),
+      VideoProgress.find({ studentId, ...req.tenantFilter }).lean(),
+      Assignment.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean()
     ]);
 
     // Populate quiz title / course title onto each submission manually
@@ -45,7 +45,7 @@ exports.getStudentProfile = async (req, res, next) => {
     // submission, given quizId doesn't always have courseId set — e.g.
     // monthly exams).
     const quizIds = [...new Set(quizSubmissions.map((s) => String(s.quizId)))];
-    const quizzes = await Quiz.find({ _id: { $in: quizIds } }).lean();
+    const quizzes = await Quiz.find({ _id: { $in: quizIds }, ...req.tenantFilter }).lean();
     const quizMap = new Map(quizzes.map((q) => [String(q._id), q]));
 
     const courseIds = [
@@ -53,7 +53,7 @@ exports.getStudentProfile = async (req, res, next) => {
         quizzes.filter((q) => q.courseId).map((q) => String(q.courseId))
       )
     ];
-    const courses = await Course.find({ _id: { $in: courseIds } }).select('title_ar title_en').lean();
+    const courses = await Course.find({ _id: { $in: courseIds }, ...req.tenantFilter }).select('title_ar title_en').lean();
     const courseMap = new Map(courses.map((c) => [String(c._id), c]));
 
     const enrichedSubmissions = quizSubmissions.map((sub) => {
@@ -69,7 +69,7 @@ exports.getStudentProfile = async (req, res, next) => {
     // Attach course title onto each VideoProgress entry as well, for
     // display purposes (satisfies feature #2's "watch progress per video").
     const progressCourseIds = [...new Set(videoProgress.map((v) => String(v.courseId)))];
-    const progressCourses = await Course.find({ _id: { $in: progressCourseIds } }).select('title_ar').lean();
+    const progressCourses = await Course.find({ _id: { $in: progressCourseIds }, ...req.tenantFilter }).select('title_ar').lean();
     const progressCourseMap = new Map(progressCourses.map((c) => [String(c._id), c]));
 
     const enrichedProgress = videoProgress.map((p) => ({

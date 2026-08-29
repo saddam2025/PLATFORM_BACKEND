@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
+const tenantScope = require('../middlewares/tenantScope.middleware');
 const { generateAccessCodes, redeemAccessCode } = require('../controllers/accessCodeController');
 
 const gateGenerate = (req, res, next) => {
@@ -11,11 +12,12 @@ const gateGenerate = (req, res, next) => {
 router.post(
   '/instructors/:instructorId/courses/:courseId/access-codes/generate',
   protect,
+  tenantScope,
   authorize('admin', 'assistant'),
   gateGenerate,
   generateAccessCodes
 );
 
-router.post('/access-codes/redeem', protect, authorize('student'), redeemAccessCode);
+router.post('/access-codes/redeem', protect, tenantScope, authorize('student'), redeemAccessCode);
 
 module.exports = router;

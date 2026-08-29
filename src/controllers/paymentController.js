@@ -14,7 +14,7 @@ exports.startCourseCheckout = async (req, res, next) => {
   try {
     const { courseId } = req.params;
 
-    const course = await Course.findById(courseId);
+    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }
@@ -24,7 +24,7 @@ exports.startCourseCheckout = async (req, res, next) => {
     // the legitimate server-to-server use case those fields exist for.
     // This request NEVER forwards these values to the client; only the
     // resulting iframe URL/payment token is returned below.
-    const instructor = await User.findById(course.instructorId).select('+paymobApiKey +paymobIntegrationId');
+    const instructor = await User.findOne({ _id: course.instructorId, ...req.tenantFilter }).select('+paymobApiKey +paymobIntegrationId');
     if (!instructor || !instructor.paymobApiKey || !instructor.paymobIntegrationId) {
       return res.status(400).json({ message: 'بوابة الدفع غير مهيأة لهذا المدرس' });
     }
@@ -32,6 +32,7 @@ exports.startCourseCheckout = async (req, res, next) => {
     // Create a pending Transaction up front so the webhook has a record to
     // update once Paymob calls back.
     const transaction = await Transaction.create({
+      tenantId: req.user.tenantId,
       userId: req.user._id,
       type: 'purchase',
       source: 'paymob',
@@ -116,6 +117,9 @@ exports.handlePaymobWebhook = async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid payload' });
     }
 
+    if (!require('mongoose').isValidObjectId(merchantOrderId)) {
+      return res.status(400).json({ message: 'Invalid payload' });
+    }
     const transaction = await Transaction.findById(merchantOrderId);
     if (!transaction) {
       // eslint-disable-next-line no-console
@@ -128,7 +132,7 @@ exports.handlePaymobWebhook = async (req, res, next) => {
     // (each instructor has their OWN Paymob integration and secret).
     let instructorId = null;
     if (transaction.relatedCourseId) {
-      const course = await Course.findById(transaction.relatedCourseId);
+      const course = await Course.findOne({ _id: transaction.relatedCourseId, tenantId: transaction.tenantId });
       instructorId = course ? course.instructorId : null;
     }
 
@@ -138,7 +142,7 @@ exports.handlePaymobWebhook = async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid payload' });
     }
 
-    const instructor = await User.findById(instructorId).select('+paymobWebhookSecret');
+    const instructor = await User.findOne({ _id: instructorId, tenantId: transaction.tenantId }).select('+paymobWebhookSecret');
     if (!instructor || !instructor.paymobWebhookSecret) {
       // eslint-disable-next-line no-console
       console.warn('[Paymob webhook] instructor has no webhook secret configured, rejecting');
@@ -210,7 +214,7 @@ exports.handlePaymobWebhook = async (req, res, next) => {
     await transaction.save();
 
     if (transaction.type === 'purchase' && transaction.relatedCourseId) {
-      const course = await Course.findById(transaction.relatedCourseId);
+      const course = await Course.findOne({ _id: transaction.relatedCourseId, tenantId: transaction.tenantId });
       if (course) {
         const purchasedAt = new Date();
         const expiresAt = new Date(purchasedAt);
@@ -219,9 +223,10 @@ exports.handlePaymobWebhook = async (req, res, next) => {
         // Same LectureAccess creation as the access-code redemption path —
         // this closes the B5 dependency via the Paymob path too.
         await LectureAccess.findOneAndUpdate(
-          { studentId: transaction.userId, courseId: course._id },
+          { studentId: transaction.userId, courseId: course._id, tenantId: transaction.tenantId },
           {
             $setOnInsert: {
+              tenantId: transaction.tenantId,
               purchasedAt,
               expiresAt,
               maxViews: course.maxViews,
@@ -232,7 +237,7 @@ exports.handlePaymobWebhook = async (req, res, next) => {
         );
       }
     } else if (transaction.type === 'topup') {
-      await User.findByIdAndUpdate(transaction.userId, { $inc: { walletBalance: transaction.amount } });
+      await User.updateOne({ _id: transaction.userId, tenantId: transaction.tenantId }, { $inc: { walletBalance: transaction.amount } });
     }
 
     res.json({ message: 'ok' });

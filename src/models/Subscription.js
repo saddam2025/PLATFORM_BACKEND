@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const subscriptionSchema = new mongoose.Schema(
   {
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     stage: {

@@ -36,6 +36,7 @@ exports.createReel = async (req, res, next) => {
     }
 
     const reel = await Reel.create({
+      tenantId: req.user.tenantId,
       instructorId,
       uploadedBy: req.user._id,
       videoUrl,
@@ -47,6 +48,7 @@ exports.createReel = async (req, res, next) => {
     // since a new reel is content-adjacent the same way a new course is)
     // whenever a reel is uploaded.
     await createNotificationsForAudience({
+      tenantId: req.user.tenantId,
       instructorId,
       type: 'new_reel',
       title: 'ريلز جديد',
@@ -76,7 +78,8 @@ exports.listReels = async (req, res, next) => {
     const hasSubscription = await Subscription.exists({
       studentId: req.user._id,
       instructorId,
-      status: 'active'
+      status: 'active',
+      ...req.tenantFilter
     });
 
     let hasLectureAccess = false;
@@ -84,12 +87,13 @@ exports.listReels = async (req, res, next) => {
       // LectureAccess doesn't store instructorId directly — it's scoped by
       // courseId, so we check whether the student has any LectureAccess
       // record for a course belonging to this instructor.
-      const instructorCourseIds = await Course.find({ instructorId }).select('_id').lean();
+      const instructorCourseIds = await Course.find({ instructorId, ...req.tenantFilter }).select('_id').lean();
       const courseIds = instructorCourseIds.map((c) => c._id);
       hasLectureAccess = await LectureAccess.exists({
         studentId: req.user._id,
         courseId: { $in: courseIds },
-        expiresAt: { $gt: new Date() }
+        expiresAt: { $gt: new Date() },
+        ...req.tenantFilter
       });
     }
 
@@ -97,7 +101,7 @@ exports.listReels = async (req, res, next) => {
       return res.status(403).json({ message: 'يجب الاشتراك مع هذا المدرس لعرض الريلز' });
     }
 
-    const reels = await Reel.find({ instructorId }).sort({ createdAt: -1 });
+    const reels = await Reel.find({ instructorId, ...req.tenantFilter }).sort({ createdAt: -1 });
     res.json({ data: reels });
   } catch (err) {
     next(err);
@@ -111,7 +115,8 @@ exports.listReels = async (req, res, next) => {
 exports.incrementView = async (req, res, next) => {
   try {
     const { reelId } = req.params;
-    await Reel.findByIdAndUpdate(reelId, { $inc: { viewCount: 1 } });
+    const reel = await Reel.findOneAndUpdate({ _id: reelId, ...req.tenantFilter }, { $inc: { viewCount: 1 } }, { new: true });
+    if (!reel) return res.status(404).json({ message: 'الريلز غير موجود' });
     res.json({ message: 'ok' });
   } catch (err) {
     next(err);
@@ -129,7 +134,7 @@ exports.incrementView = async (req, res, next) => {
 exports.deleteReel = async (req, res, next) => {
   try {
     const { reelId } = req.params;
-    const reel = await Reel.findById(reelId);
+    const reel = await Reel.findOne({ _id: reelId, ...req.tenantFilter });
     if (!reel) {
       return res.status(404).json({ message: 'الريلز غير موجود' });
     }
