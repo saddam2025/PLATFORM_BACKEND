@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema(
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     recipientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    type: { type: String, enum: ['new_course', 'new_reel', 'exam_result', 'message'], required: true },
+    type: { type: String, enum: ['new_course', 'new_reel', 'exam_result', 'message', 'assignment_graded', 'tenant_status'], required: true },
     title: { type: String, required: true },
     body: { type: String, default: '' },
     // Polymorphic reference — a course id, a reel id, etc., depending on `type`.

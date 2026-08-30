@@ -101,8 +101,14 @@ exports.listReels = async (req, res, next) => {
       return res.status(403).json({ message: 'يجب الاشتراك مع هذا المدرس لعرض الريلز' });
     }
 
-    const reels = await Reel.find({ instructorId, ...req.tenantFilter }).sort({ createdAt: -1 });
-    res.json({ data: reels });
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+    const filter = { instructorId, ...req.tenantFilter };
+    const [reels, total] = await Promise.all([
+      Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+      Reel.countDocuments(filter)
+    ]);
+    res.json({ data: reels, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
   } catch (err) {
     next(err);
   }

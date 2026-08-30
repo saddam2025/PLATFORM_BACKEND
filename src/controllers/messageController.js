@@ -29,6 +29,9 @@ exports.sendMessage = async (req, res, next) => {
       if (String(req.user.childId) !== String(studentId)) {
         return res.status(403).json({ message: 'غير مصرح لك بالمراسلة بخصوص هذا الطالب' });
       }
+      if (recipient.role !== 'assistant' || String(recipient.instructorId) !== String(student.instructorId)) {
+        return res.status(403).json({ message: 'يمكنك مراسلة مساعد الطالب المعيّن فقط' });
+      }
     } else if (req.user.role === 'assistant' || req.user.role === 'admin') {
       // studentId must belong to a student within the sender's OWN
       // instructorId tenant — an assistant/admin cannot message about a
@@ -80,7 +83,19 @@ exports.getThread = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بعرض هذه المحادثة' });
     }
 
-    const messages = await Message.find({ studentId, ...req.tenantFilter }).sort({ createdAt: 1 });
+    let messageFilter = { studentId, ...req.tenantFilter };
+    if (req.user.role === 'parent') {
+      const assistants = await User.find({ role: 'assistant', instructorId: student.instructorId, ...req.tenantFilter }).select('_id');
+      const assistantIds = assistants.map((assistant) => assistant._id);
+      messageFilter = {
+        ...messageFilter,
+        $or: [
+          { fromUserId: req.user._id, toUserId: { $in: assistantIds } },
+          { toUserId: req.user._id, fromUserId: { $in: assistantIds } }
+        ]
+      };
+    }
+    const messages = await Message.find(messageFilter).sort({ createdAt: 1 });
     res.json({ data: messages });
   } catch (err) {
     next(err);

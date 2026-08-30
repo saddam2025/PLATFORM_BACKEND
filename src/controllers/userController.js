@@ -102,3 +102,54 @@ exports.updateAssistantPermissions = async (req, res, next) => {
     next(err);
   }
 };
+
+// GET /api/v1/instructors/:id/assistant-profile
+// protect + tenantScope + authorize('parent', 'admin') at route level.
+// The first lookup deliberately fetches only authorization metadata. It lets
+// us reject a cross-tenant target before querying any profile fields.
+exports.getAssistantProfile = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const targetUser = await User.findById(id).select('tenantId role instructorId');
+    // Match student-profile's anti-enumeration behavior: a target outside
+    // the caller's tenant is indistinguishable from an unknown assistant.
+    if (!targetUser || String(targetUser.tenantId) !== String(req.user.tenantId)) {
+      return res.status(404).json({ message: 'المساعد غير موجود' });
+    }
+
+    if (targetUser.role !== 'assistant') {
+      return res.status(404).json({ message: 'المساعد غير موجود' });
+    }
+
+    // A parent may view only an assistant assigned to their own child’s
+    // instructor. An admin is already limited to their tenant above.
+    if (req.user.role === 'parent') {
+      const child = await User.findOne({
+        _id: req.user.childId,
+        role: 'student',
+        ...req.tenantFilter
+      }).select('instructorId');
+
+      if (!child || String(child.instructorId) !== String(targetUser.instructorId)) {
+        return res.status(403).json({ message: 'غير مصرح لك بعرض بيانات هذا المساعد' });
+      }
+    }
+
+    // Deliberately projection-only: no email, phone, permissions, tokens,
+    // payment credentials, or other personal/account fields are fetched.
+    const assistant = await User.findOne({
+      _id: targetUser._id,
+      role: 'assistant',
+      ...req.tenantFilter
+    }).select('name avatarUrl role bio -_id');
+
+    if (!assistant) {
+      return res.status(404).json({ message: 'المساعد غير موجود' });
+    }
+
+    res.json({ data: assistant });
+  } catch (err) {
+    next(err);
+  }
+};

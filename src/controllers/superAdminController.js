@@ -3,6 +3,7 @@ const Tenant = require('../models/Tenant');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const Transaction = require('../models/Transaction');
+const createNotificationsForAudience = require('../utils/createNotification');
 
 const SUBSCRIPTION_STATUSES = ['active', 'suspended', 'trial'];
 const SUBDOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -187,12 +188,25 @@ exports.getTenant = async (req, res, next) => {
 exports.updateTenant = async (req, res, next) => {
   try {
     validateTenantId(req.params.id);
+    const updates = getTenantUpdateData(req.body);
+    const existingTenant = await Tenant.findOne({ _id: req.params.id, deletedAt: null }).select('subscriptionStatus ownerId');
+    if (!existingTenant) return res.status(404).json({ message: 'Tenant not found' });
     const tenant = await Tenant.findOneAndUpdate(
       { _id: req.params.id, deletedAt: null },
-      { $set: getTenantUpdateData(req.body) },
+      { $set: updates },
       { new: true, runValidators: true }
     );
-    if (!tenant) return res.status(404).json({ message: 'Tenant not found' });
+    if (updates.subscriptionStatus && updates.subscriptionStatus !== existingTenant.subscriptionStatus) {
+      await createNotificationsForAudience({
+        tenantId: tenant._id,
+        instructorId: tenant.ownerId,
+        type: 'tenant_status',
+        title: 'تحديث حالة الاشتراك',
+        body: `تم تغيير حالة اشتراك المؤسسة إلى ${updates.subscriptionStatus}`,
+        relatedId: tenant._id,
+        audience: 'tenant'
+      });
+    }
     res.json({ data: tenant });
   } catch (err) {
     next(err);

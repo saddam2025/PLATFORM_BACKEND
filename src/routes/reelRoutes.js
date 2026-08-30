@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { uploadVideo } = require('../middlewares/uploadMiddleware');
+const { uploadReelVideo } = require('../middlewares/uploadMiddleware');
 const { createReel, listReels, incrementView, deleteReel } = require('../controllers/reelController');
 
 const gateVideoUpload = (req, res, next) => {
@@ -15,7 +15,7 @@ router.post(
   protect,
   tenantScope,
   authorize('admin', 'assistant'),
-  uploadVideo.single('video'),
+  uploadReelVideo,
   gateVideoUpload,
   createReel
 );

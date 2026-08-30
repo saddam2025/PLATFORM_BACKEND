@@ -2,7 +2,10 @@ const Quiz = require('../models/Quiz');
 const QuizSubmission = require('../models/QuizSubmission');
 const LectureProgress = require('../models/LectureProgress');
 const Course = require('../models/Course');
+const Subscription = require('../models/Subscription');
 const gradeSubmission = require('../utils/gradeQuiz');
+const createNotificationsForAudience = require('../utils/createNotification');
+const mongoose = require('mongoose');
 
 // OWASP A01/A03-adjacent: never send correctOptionIndex or explanation to
 // the client before a submission exists — a student holding the answer key
@@ -22,11 +25,61 @@ function stripAnswerKey(quiz) {
   };
 }
 
+function currentMonthString(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function getMonthlyExamEligibility(quiz, user, tenantFilter) {
+  const missingRequirements = [];
+  const month = currentMonthString();
+
+  if (quiz.month !== month) {
+    return { eligible: false, reason: 'هذا الاختبار ليس اختبار الشهر الحالي', missingRequirements: ['current_month_exam'] };
+  }
+
+  const subscription = await Subscription.findOne({
+    studentId: user._id,
+    instructorId: quiz.instructorId,
+    stage: quiz.stage,
+    month: quiz.month,
+    status: { $in: ['active', 'pending_exam'] },
+    ...tenantFilter
+  });
+  if (!subscription) {
+    return { eligible: false, reason: 'لا يوجد اشتراك صالح لهذا الاختبار', missingRequirements: ['active_subscription'] };
+  }
+  if (subscription.monthlyExamPassed) {
+    return { eligible: false, reason: 'تم اجتياز اختبار الشهر بالفعل', missingRequirements: ['exam_not_already_passed'] };
+  }
+
+  const prerequisites = quiz.prerequisiteQuizIds || [];
+  if (prerequisites.length) {
+    const passedQuizIds = await QuizSubmission.distinct('quizId', {
+      studentId: user._id,
+      quizId: { $in: prerequisites },
+      passed: true,
+      ...tenantFilter
+    });
+    const passed = new Set(passedQuizIds.map(String));
+    missingRequirements.push(...prerequisites.filter((id) => !passed.has(String(id))).map(String));
+  }
+
+  return {
+    eligible: missingRequirements.length === 0,
+    reason: missingRequirements.length === 0 ? 'تم استيفاء جميع المتطلبات' : 'لم يتم اجتياز جميع الاختبارات المطلوبة',
+    missingRequirements
+  };
+}
+
 // GET /api/v1/quizzes/:quizId
 exports.getQuiz = async (req, res, next) => {
   try {
     const quiz = await Quiz.findOne({ _id: req.params.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    if (req.user.role === 'student' && quiz.type === 'monthly_exam') {
+      const eligibility = await getMonthlyExamEligibility(quiz, req.user, req.tenantFilter);
+      if (!eligibility.eligible) return res.status(403).json({ message: eligibility.reason, ...eligibility });
+    }
     res.json({ data: stripAnswerKey(quiz) });
   } catch (err) {
     next(err);
@@ -61,6 +114,16 @@ exports.submitQuiz = async (req, res, next) => {
       score,
       passed,
       incorrectQuestionIndexes
+    });
+
+    await createNotificationsForAudience({
+      tenantId: req.user.tenantId,
+      instructorId: quiz.instructorId,
+      type: 'exam_result',
+      title: 'نتيجة الاختبار',
+      body: `درجتك: ${score}%`,
+      relatedId: submission._id,
+      recipientIds: req.user._id
     });
 
     // Lecture-progression gating (feature #6): only applies when the quiz is
@@ -255,6 +318,20 @@ exports.submitRetry = async (req, res, next) => {
         questions: reviewQuestions
       }
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/quizzes/:id/eligibility
+exports.checkMonthlyExamEligibility = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ message: 'معرف الاختبار غير صالح' });
+    const quiz = await Quiz.findOne({ _id: id, ...req.tenantFilter }).select('type prerequisiteQuizIds instructorId stage month');
+    if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    if (quiz.type !== 'monthly_exam') return res.status(400).json({ message: 'فحص الأهلية متاح لاختبارات الشهر فقط' });
+    res.json({ data: await getMonthlyExamEligibility(quiz, req.user, req.tenantFilter) });
   } catch (err) {
     next(err);
   }

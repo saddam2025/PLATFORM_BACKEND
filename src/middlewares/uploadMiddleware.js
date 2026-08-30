@@ -93,6 +93,45 @@ const uploadGeneral = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB — thumbnails, homework
 });
 
+const reelMulter = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === 'video' && ['video/mp4', 'video/webm'].includes(file.mimetype)) return cb(null, true);
+    return cb(new Error('Reel video must be an MP4 or WebM file'), false);
+  },
+  limits: { fileSize: 500 * 1024 * 1024 }
+});
+
+async function hasValidReelSignature(file) {
+  const handle = await fs.promises.open(file.path, 'r');
+  try {
+    const buffer = Buffer.alloc(12);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const isWebm = bytesRead >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+    const isMp4 = bytesRead >= 8 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+    return (file.mimetype === 'video/webm' && isWebm) || (file.mimetype === 'video/mp4' && isMp4);
+  } finally {
+    await handle.close();
+  }
+}
+
+const uploadReelVideo = (req, res, next) => {
+  reelMulter.single('video')(req, res, async (err) => {
+    if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Reel video must be 500MB or smaller' : err.message || 'Invalid reel upload' });
+    if (!req.file) return res.status(400).json({ message: 'ملف الفيديو مطلوب' });
+    try {
+      if (!await hasValidReelSignature(req.file)) {
+        await fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ message: 'محتوى ملف الفيديو لا يطابق نوع MP4 أو WebM' });
+      }
+      next();
+    } catch (validationError) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      next(validationError);
+    }
+  });
+};
+
 const avatarMulter = multer({
   storage,
   fileFilter,
@@ -114,4 +153,4 @@ const uploadAvatar = (req, res, next) => {
   });
 };
 
-module.exports = { uploadVideo, uploadGeneral, uploadAvatar };
+module.exports = { uploadVideo, uploadGeneral, uploadAvatar, uploadReelVideo };

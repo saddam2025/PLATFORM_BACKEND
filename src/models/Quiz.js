@@ -36,6 +36,7 @@ const quizSchema = new mongoose.Schema(
       default: null
     },
     month: { type: String, default: null }, // e.g. "2026-07", only for type: 'monthly_exam'
+    prerequisiteQuizIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Quiz' }],
     passingScore: { type: Number, default: 50 },
     timeLimitMinutes: { type: Number, default: null },
     questions: { type: [questionSchema], default: [] }

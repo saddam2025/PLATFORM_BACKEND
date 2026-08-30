@@ -4,6 +4,7 @@ const QuizSubmission = require('../models/QuizSubmission');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const gradeSubmission = require('../utils/gradeQuiz');
+const createNotificationsForAudience = require('../utils/createNotification');
 
 const MONTHLY_SUBSCRIPTION_PRICE = 199; // matches the mock price already shown in SubscriptionPlanPage.jsx
 
@@ -123,6 +124,10 @@ exports.submitMonthlyExam = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بهذا الإجراء' });
     }
 
+    if (!['active', 'pending_exam'].includes(subscription.status) || subscription.monthlyExamPassed) {
+      return res.status(403).json({ message: 'هذا الاشتراك غير مؤهل لتقديم اختبار الشهر' });
+    }
+
     if (!Array.isArray(answers)) {
       return res.status(400).json({ message: 'إجابات غير صالحة' });
     }
@@ -133,7 +138,6 @@ exports.submitMonthlyExam = async (req, res, next) => {
       stage: subscription.stage,
       month: subscription.month,
       ...req.tenantFilter
-      , ...req.tenantFilter
     });
 
     if (!quiz) {
@@ -151,6 +155,16 @@ exports.submitMonthlyExam = async (req, res, next) => {
       score,
       passed,
       incorrectQuestionIndexes
+    });
+
+    await createNotificationsForAudience({
+      tenantId: req.user.tenantId,
+      instructorId: subscription.instructorId,
+      type: 'exam_result',
+      title: 'نتيجة اختبار الشهر',
+      body: `درجتك: ${score}%`,
+      relatedId: submission._id,
+      recipientIds: req.user._id
     });
 
     subscription.monthlyExamSubmissionId = submission._id;
