@@ -16,12 +16,21 @@ const app = express();
 // Security headers (OWASP A05 — Security Misconfiguration).
 app.use(helmet());
 
-// CORS explicitly locked to the configured frontend origin — never wildcard,
-// since credentials: true requires an explicit origin per the CORS spec
-// anyway, and wildcarding would otherwise be a misconfiguration risk.
+// CORS is restricted to the configured, comma-separated frontend origins —
+// never wildcard, because credentialed requests require an explicit origin.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin(origin, callback) {
+      // Non-browser clients omit Origin; browser requests must match the
+      // explicitly configured allow-list.
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS origin not allowed: ${origin}`));
+    },
     credentials: true
   })
 );
