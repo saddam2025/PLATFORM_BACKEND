@@ -20,7 +20,7 @@ router.post(
   createReel
 );
 
-router.get('/instructors/:instructorId/reels', protect, tenantScope, authorize('student'), listReels);
+router.get('/instructors/:instructorId/reels', protect, tenantScope, authorize('student', 'admin', 'assistant'), listReels);
 router.patch('/reels/:reelId/view', protect, tenantScope, authorize('student'), incrementView);
 router.delete('/reels/:reelId', protect, tenantScope, authorize('admin', 'assistant'), deleteReel);
 

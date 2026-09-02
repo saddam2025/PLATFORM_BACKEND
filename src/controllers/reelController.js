@@ -11,6 +11,27 @@ function isOwnerOfInstructor(user, instructorId) {
   return false;
 }
 
+function parsePagination(query) {
+  const parsePositiveInteger = (value, name, defaultValue, max) => {
+    if (value === undefined) return defaultValue;
+    if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) {
+      return { error: `${name} يجب أن يكون عدداً صحيحاً موجباً` };
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || (max && parsed > max)) {
+      return { error: max ? `${name} يجب ألا يتجاوز ${max}` : `${name} غير صالح` };
+    }
+    return parsed;
+  };
+
+  const page = parsePositiveInteger(query.page, 'page', 1);
+  const limit = parsePositiveInteger(query.limit, 'limit', 20, 50);
+  if (typeof page === 'object' || typeof limit === 'object') {
+    return { error: page.error || limit.error };
+  }
+  return { page, limit };
+}
+
 // POST /api/v1/instructors/:instructorId/reels
 // protect + authorize('admin','assistant') + requirePermission('can_upload_video')
 // for assistants (applied at route level, reusing the exact same permission
@@ -64,7 +85,7 @@ exports.createReel = async (req, res, next) => {
 };
 
 // GET /api/v1/instructors/:instructorId/reels
-// protect + authorize('student').
+// protect + authorize('student', 'admin', 'assistant').
 // CRITICAL access check per feature #8: being registered under an
 // instructorId is NOT the same as being subscribed. A student must have at
 // least one active Subscription OR LectureAccess record tied to this
@@ -74,6 +95,24 @@ exports.createReel = async (req, res, next) => {
 exports.listReels = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
+    const { page, limit, error } = parsePagination(req.query);
+    if (error) return res.status(400).json({ message: error });
+
+    // Management users get the complete tenant-scoped list for the instructor
+    // they own/work for. Student access deliberately retains its subscription
+    // or lecture-access gate below.
+    if (req.user.role === 'admin' || req.user.role === 'assistant') {
+      if (!isOwnerOfInstructor(req.user, instructorId)) {
+        return res.status(403).json({ message: 'غير مصرح لك بعرض ريلز هذا الحساب' });
+      }
+
+      const filter = { instructorId, ...req.tenantFilter };
+      const [reels, total] = await Promise.all([
+        Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+        Reel.countDocuments(filter)
+      ]);
+      return res.json({ data: reels, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+    }
 
     const hasSubscription = await Subscription.exists({
       studentId: req.user._id,
@@ -101,8 +140,6 @@ exports.listReels = async (req, res, next) => {
       return res.status(403).json({ message: 'يجب الاشتراك مع هذا المدرس لعرض الريلز' });
     }
 
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
     const filter = { instructorId, ...req.tenantFilter };
     const [reels, total] = await Promise.all([
       Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),

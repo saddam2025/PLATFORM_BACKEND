@@ -5,6 +5,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 
 const connectDB = require('./config/db');
 const errorHandler = require('./middlewares/errorHandler');
@@ -37,6 +38,11 @@ app.use(
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
+
+// Upload middleware writes only to src/uploads/{avatars,videos,thumbnails,homework}.
+// Expose that directory at the URL prefix stored by the corresponding models;
+// never expose the project root itself.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));

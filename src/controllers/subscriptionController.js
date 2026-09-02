@@ -51,7 +51,32 @@ exports.getCurrentSubscription = async (req, res, next) => {
       }
     }
 
-    res.json({ data: subscription });
+    // A monthly exam is defined by the existing subscription relationship:
+    // same tenant, instructor, stage, and current month. The client never
+    // selects a quiz or subscription for this lookup.
+    const monthlyExam = await Quiz.findOne({
+      type: 'monthly_exam',
+      instructorId: subscription.instructorId,
+      stage: subscription.stage,
+      month: subscription.month,
+      ...req.tenantFilter
+    }).select('_id type stage month timeLimitMinutes passingScore').lean();
+
+    res.json({
+      data: {
+        ...subscription.toObject(),
+        monthlyExam: monthlyExam
+          ? {
+            quizId: monthlyExam._id,
+            type: monthlyExam.type,
+            stage: monthlyExam.stage,
+            month: monthlyExam.month,
+            timeLimitMinutes: monthlyExam.timeLimitMinutes,
+            passingScore: monthlyExam.passingScore
+          }
+          : null
+      }
+    });
   } catch (err) {
     next(err);
   }
@@ -177,7 +202,16 @@ exports.submitMonthlyExam = async (req, res, next) => {
     await subscription.save();
 
     res.json({
-      data: { score, passed, totalMarks, earnedMarks, passingMarks, canSubscribeNextMonth: passed }
+      data: {
+        submissionId: submission._id,
+        score,
+        passed,
+        passingScore: quiz.passingScore,
+        totalMarks,
+        earnedMarks,
+        passingMarks,
+        canSubscribeNextMonth: passed
+      }
     });
   } catch (err) {
     next(err);
