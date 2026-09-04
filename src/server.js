@@ -39,6 +39,15 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+// Avatar images are rendered by the separately-hosted frontend in development.
+// Helmet's default Cross-Origin-Resource-Policy is `same-origin`, so override
+// it only for this public image subdirectory rather than weakening headers for
+// the complete uploads tree or the application as a whole.
+app.use('/uploads/avatars', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, 'uploads', 'avatars')));
+
 // Upload middleware writes only to src/uploads/{avatars,videos,thumbnails,homework}.
 // Expose that directory at the URL prefix stored by the corresponding models;
 // never expose the project root itself.
@@ -62,7 +71,9 @@ app.use('/api/v1/auth', authLimiter);
 
 // ROUTES MOUNTED HERE
 app.use('/api/v1/instructors', require('./routes/courseRoutes'));
-app.use('/api/v1/quizzes', require('./routes/quizRoutes'));
+const { quizRoutes, quizAuthoringRoutes } = require('./routes/quizRoutes');
+app.use('/api/v1/quizzes', quizRoutes);
+app.use('/api/v1/instructors', quizAuthoringRoutes);
 app.use('/api/v1/subscriptions', require('./routes/subscriptionRoutes'));
 app.use('/api/v1/courses', require('./routes/lectureAccessRoutes'));
 app.use('/api/v1/instructors', require('./routes/studentProfileRoutes'));
@@ -71,13 +82,18 @@ app.use('/api/v1', require('./routes/reelRoutes')); // reelRoutes defines its ow
 app.use('/api/v1/notifications', require('./routes/notificationRoutes'));
 app.use('/api/v1/instructors', require('./routes/leaderboardRoutes'));
 app.use('/api/v1/messages', require('./routes/messageRoutes'));
+app.use('/api/v1/parents', require('./routes/parentRoutes'));
 app.use('/api/v1', require('./routes/scratchCardRoutes'));
 app.use('/api/v1', require('./routes/accessCodeRoutes'));
 app.use('/api/v1', require('./routes/paymentRoutes'));
+app.use('/api/v1', require('./routes/assignmentRoutes'));
 // (future prompts will add: app.use('/api/v1/auth', authRoutes); etc.)
 app.use('/api/v1/auth', require('./routes/authRoutes'));
 app.use('/api/v1/instructors', require('./routes/userRoutes'));
+app.use('/api/v1/instructors', require('./routes/tenantSettingsRoutes'));
+app.use('/api/v1/instructors', require('./routes/dashboardRoutes'));
 app.use('/api/v1/super-admin', require('./routes/superAdminRoutes'));
+app.use('/api/v1/tenants', require('./routes/publicTenantRoutes'));
 app.get('/api/v1/health', (req, res) => {
   res.json({ status: 'ok' });
 });

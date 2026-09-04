@@ -26,7 +26,7 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized, user not found' });
     }
 
-    if (user.inviteStatus === 'pending') {
+    if (!user.isActive || user.deletedAt || user.inviteStatus === 'pending') {
       // Assistant accounts created via invite but not yet activated
       // (password not set) must never be allowed to authenticate.
       return res.status(401).json({ message: 'Account not active' });

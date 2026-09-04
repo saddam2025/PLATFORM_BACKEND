@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
-const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', avatar: 'avatars' };
+const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', assignment: 'assignments', avatar: 'avatars' };
 
 // Ensure target directories exist at startup — avoids runtime ENOENT errors
 // on first upload in a fresh environment.
@@ -18,6 +18,7 @@ function destinationForField(fieldname) {
   if (fieldname === 'video') return SUBDIRS.video;
   if (fieldname === 'thumbnail') return SUBDIRS.thumbnail;
   if (fieldname === 'homework') return SUBDIRS.homework;
+  if (fieldname === 'assignment') return SUBDIRS.assignment;
   if (fieldname === 'avatar') return SUBDIRS.avatar;
   return null;
 }
@@ -59,14 +60,16 @@ const fileFilter = (req, file, cb) => {
     return cb(new Error('Invalid file type for thumbnail field: only image/* MIME types allowed'), false);
   }
 
-  if (field === 'homework') {
+  if (field === 'homework' || field === 'assignment') {
     const allowedHomeworkMimes = [
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ];
-    if (allowedHomeworkMimes.includes(file.mimetype)) return cb(null, true);
-    return cb(new Error('Invalid file type for homework field: only PDF/DOC/DOCX allowed'), false);
+    const allowedAssignmentMimes = [...allowedHomeworkMimes, 'image/jpeg', 'image/png', 'image/webp'];
+    const allowedMimes = field === 'assignment' ? allowedAssignmentMimes : allowedHomeworkMimes;
+    if (allowedMimes.includes(file.mimetype)) return cb(null, true);
+    return cb(new Error(`Invalid file type for ${field} field: only ${field === 'assignment' ? 'PDF/DOC/DOCX/JPEG/PNG/WebP' : 'PDF/DOC/DOCX'} allowed`), false);
   }
 
   if (field === 'avatar') {
@@ -92,6 +95,24 @@ const uploadGeneral = multer({
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB — thumbnails, homework
 });
+
+const assignmentMulter = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+const uploadAssignment = (req, res, next) => {
+  assignmentMulter.single('assignment')(req, res, (err) => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Assignment file must be 10MB or smaller'
+        : err.message || 'Invalid assignment upload';
+      return res.status(400).json({ message });
+    }
+    next();
+  });
+};
 
 const reelMulter = multer({
   storage,
@@ -153,4 +174,4 @@ const uploadAvatar = (req, res, next) => {
   });
 };
 
-module.exports = { uploadVideo, uploadGeneral, uploadAvatar, uploadReelVideo };
+module.exports = { uploadVideo, uploadGeneral, uploadAssignment, uploadAvatar, uploadReelVideo };

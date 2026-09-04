@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 const User = require('../models/User');
+const Tenant = require('../models/Tenant');
 const { STAGE_ENUM } = require('../models/User');
 
 function generateToken(userId) {
@@ -68,7 +70,22 @@ exports.register = async (req, res, next) => {
     }
 
     let childId = null;
-    const instructor = await User.findOne({ _id: instructorId, role: 'admin', isActive: true }).select('tenantId');
+    // Public registration routes use a tenant subdomain (for example
+    // /math/register), while legacy clients submit the admin ObjectId. Resolve
+    // either form to the tenant's active owner before assigning a student.
+    let instructor;
+    if (mongoose.isValidObjectId(instructorId)) {
+      instructor = await User.findOne({ _id: instructorId, role: 'admin', isActive: true }).select('tenantId');
+    } else {
+      const tenant = await Tenant.findOne({
+        subdomain: String(instructorId).trim().toLowerCase(),
+        isActive: true,
+        deletedAt: null
+      }).select('ownerId');
+      if (tenant?.ownerId) {
+        instructor = await User.findOne({ _id: tenant.ownerId, role: 'admin', isActive: true }).select('tenantId');
+      }
+    }
     if (!instructor || !instructor.tenantId) {
       return res.status(400).json({ message: 'المدرس غير موجود أو غير نشط' });
     }
@@ -78,7 +95,7 @@ exports.register = async (req, res, next) => {
         return res.status(400).json({ message: 'كود ربط الطالب مطلوب' });
       }
 
-      const student = await User.findOne({ parentAccessCode, role: 'student', tenantId: instructor.tenantId, instructorId });
+      const student = await User.findOne({ parentAccessCode, role: 'student', tenantId: instructor.tenantId, instructorId: instructor._id });
       if (!student) {
         return res.status(400).json({ message: 'كود ربط غير صالح' });
       }
@@ -91,7 +108,7 @@ exports.register = async (req, res, next) => {
       passwordHash: password,
       role,
       tenantId: instructor.tenantId,
-      instructorId,
+      instructorId: instructor._id,
       childId,
       // NEW: only set for students — schema default (null) applies for
       // parents, matching the field's required-only-for-student validator.

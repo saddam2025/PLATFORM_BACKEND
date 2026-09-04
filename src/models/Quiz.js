@@ -21,6 +21,7 @@ const questionSchema = new mongoose.Schema(
 const quizSchema = new mongoose.Schema(
   {
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
+    title: { type: String, default: '', trim: true },
     // SCHEMA CHANGE from the previous batch: courseId is now OPTIONAL.
     // Regular lecture quizzes still set it (created alongside a Course in
     // courseController.createCourse). Monthly exam quizzes (feature #5) are

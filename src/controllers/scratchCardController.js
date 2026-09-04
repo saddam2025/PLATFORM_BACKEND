@@ -77,6 +77,35 @@ exports.generateScratchCards = async (req, res, next) => {
   }
 };
 
+// GET /api/v1/instructors/:instructorId/scratchcards?batchId=&status=
+// Intentionally returns no plaintext code and no hash. Codes are reveal-once
+// credentials; after generation only code_hash is persisted.
+exports.listScratchCards = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    const { batchId, status } = req.query;
+    if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    if (String(req.user._id) !== String(instructorId)) return res.status(403).json({ message: 'غير مصرح لك بعرض بطاقات هذا الحساب' });
+    if (batchId !== undefined && (typeof batchId !== 'string' || !batchId.trim() || batchId.length > 100)) return res.status(400).json({ message: 'معرف الدفعة غير صالح' });
+    if (status !== undefined && !['redeemed', 'available'].includes(status)) return res.status(400).json({ message: 'حالة البطاقة غير صالحة' });
+    const filter = { ...getTenantFilter(req) };
+    if (batchId) filter.batchId = batchId.trim();
+    if (status === 'redeemed') filter.isRedeemed = true;
+    if (status === 'available') filter.isRedeemed = false;
+    const [cards, batches] = await Promise.all([
+      ScratchCard.find(filter).select('-code_hash').populate('redeemedBy', 'name').sort({ createdAt: -1 }).limit(1000),
+      ScratchCard.aggregate([
+        { $match: { ...getTenantFilter(req), ...(batchId ? { batchId: batchId.trim() } : {}) } },
+        { $group: { _id: '$batchId', total: { $sum: 1 }, redeemed: { $sum: { $cond: ['$isRedeemed', 1, 0] } }, value: { $first: '$value' }, createdAt: { $min: '$createdAt' } } },
+        { $sort: { createdAt: -1 } }
+      ])
+    ]);
+    res.json({ data: { cards, batches } });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // POST /api/v1/scratchcards/redeem
 // Marks a card redeemed atomically, then credits the authenticated student's wallet.
 exports.redeemScratchCard = async (req, res, next) => {

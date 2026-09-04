@@ -1,5 +1,21 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const User = require('../models/User');
+
+function ownsInstructor(req, instructorId) {
+  return req.user.role === 'super_admin' || String(req.user._id) === String(instructorId);
+}
+
+async function findManagedAssistant(req, instructorId, assistantId) {
+  if (!mongoose.isValidObjectId(assistantId)) return null;
+  return User.findOne({
+    _id: assistantId,
+    instructorId,
+    role: 'assistant',
+    deletedAt: null,
+    ...req.tenantFilter
+  });
+}
 
 // POST /api/v1/instructors/:instructorId/assistants
 // protect + authorize('admin') applied at the route level.
@@ -11,7 +27,7 @@ exports.createAssistant = async (req, res, next) => {
     const { instructorId } = req.params;
     const { name, email, permissions } = req.body;
 
-    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
+    if (!ownsInstructor(req, instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بإضافة مساعدين لهذا الحساب' });
     }
 
@@ -63,11 +79,11 @@ exports.listAssistants = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
 
-    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
+    if (!ownsInstructor(req, instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بعرض مساعدي هذا الحساب' });
     }
 
-    const assistants = await User.find({ instructorId, role: 'assistant', ...req.tenantFilter });
+    const assistants = await User.find({ instructorId, role: 'assistant', deletedAt: null, ...req.tenantFilter });
     res.json({ data: assistants });
   } catch (err) {
     next(err);
@@ -81,13 +97,13 @@ exports.updateAssistantPermissions = async (req, res, next) => {
     const { instructorId, assistantId } = req.params;
     const { permissions } = req.body;
 
-    if (req.user.role !== 'super_admin' && String(req.user._id) !== String(instructorId)) {
+    if (!ownsInstructor(req, instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بتعديل مساعدي هذا الحساب' });
     }
 
     // BOLA check on the target resource itself: the assistant being updated
     // must actually belong to this instructor's tenant, not just any user id.
-    const assistant = await User.findOne({ _id: assistantId, instructorId, role: 'assistant', ...req.tenantFilter });
+    const assistant = await findManagedAssistant(req, instructorId, assistantId);
     if (!assistant) {
       return res.status(404).json({ message: 'المساعد غير موجود' });
     }
@@ -98,6 +114,63 @@ exports.updateAssistantPermissions = async (req, res, next) => {
     }
 
     res.json({ data: assistant.toJSON() });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/instructors/:instructorId/assistants/:assistantId/suspend
+exports.suspendAssistant = async (req, res, next) => {
+  try {
+    const { instructorId, assistantId } = req.params;
+    if (!ownsInstructor(req, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بتعليق مساعدي هذا الحساب' });
+    }
+    const assistant = await findManagedAssistant(req, instructorId, assistantId);
+    if (!assistant) return res.status(404).json({ message: 'المساعد غير موجود' });
+
+    assistant.isActive = false;
+    await assistant.save();
+    res.json({ data: assistant.toJSON() });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/instructors/:instructorId/assistants/:assistantId/reactivate
+exports.reactivateAssistant = async (req, res, next) => {
+  try {
+    const { instructorId, assistantId } = req.params;
+    if (!ownsInstructor(req, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بإعادة تفعيل مساعدي هذا الحساب' });
+    }
+    const assistant = await findManagedAssistant(req, instructorId, assistantId);
+    if (!assistant) return res.status(404).json({ message: 'المساعد غير موجود' });
+
+    assistant.isActive = true;
+    await assistant.save();
+    res.json({ data: assistant.toJSON() });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/v1/instructors/:instructorId/assistants/:assistantId
+// Soft delete retains audit/relationship data while removing the assistant
+// from management lists and blocking both future login and existing tokens.
+exports.deleteAssistant = async (req, res, next) => {
+  try {
+    const { instructorId, assistantId } = req.params;
+    if (!ownsInstructor(req, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف مساعدي هذا الحساب' });
+    }
+    const assistant = await findManagedAssistant(req, instructorId, assistantId);
+    if (!assistant) return res.status(404).json({ message: 'المساعد غير موجود' });
+
+    assistant.isActive = false;
+    assistant.deletedAt = new Date();
+    await assistant.save();
+    res.json({ data: { _id: assistant._id, isActive: assistant.isActive, deletedAt: assistant.deletedAt, deleted: true } });
   } catch (err) {
     next(err);
   }
@@ -141,6 +214,7 @@ exports.getAssistantProfile = async (req, res, next) => {
     const assistant = await User.findOne({
       _id: targetUser._id,
       role: 'assistant',
+      deletedAt: null,
       ...req.tenantFilter
     }).select('name avatarUrl role bio -_id');
 

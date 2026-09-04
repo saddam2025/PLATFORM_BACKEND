@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { generateScratchCards, redeemScratchCard } = require('../controllers/scratchCardController');
+const { generateScratchCards, listScratchCards, redeemScratchCard } = require('../controllers/scratchCardController');
 
 const gateGenerate = (req, res, next) => {
   if (req.user.role === 'admin') return next();
@@ -17,6 +17,7 @@ router.post(
   gateGenerate,
   generateScratchCards
 );
+router.get('/instructors/:instructorId/scratchcards', protect, tenantScope, authorize('admin'), listScratchCards);
 
 router.post('/scratchcards/redeem', protect, tenantScope, authorize('student'), redeemScratchCard);
 

@@ -29,6 +29,160 @@ function currentMonthString(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function isOwnerOfInstructor(user, instructorId) {
+  if (!user) return false;
+  if (user.role === 'admin') return String(user._id) === String(instructorId);
+  if (user.role === 'assistant') return String(user.instructorId) === String(instructorId);
+  return false;
+}
+
+function getTenantFilter(req) {
+  return req.tenantFilter || (req.user.tenantId ? { tenantId: req.user.tenantId } : {});
+}
+
+function normalizeQuestions(questions) {
+  if (!Array.isArray(questions) || questions.length === 0) return null;
+  const normalized = [];
+  for (const question of questions) {
+    if (!question || typeof question !== 'object' || Array.isArray(question)) return null;
+    const text = typeof question.text === 'string' ? question.text.trim() : '';
+    const options = Array.isArray(question.options) ? question.options.map((option) => typeof option === 'string' ? option.trim() : '') : [];
+    const correctOptionIndex = question.correctOptionIndex;
+    const points = Number(question.points);
+    if (!text || options.length !== 4 || options.some((option) => !option) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) {
+      return null;
+    }
+    normalized.push({
+      text,
+      options,
+      correctOptionIndex,
+      points,
+      explanation: typeof question.explanation === 'string' ? question.explanation.trim() : ''
+    });
+  }
+  return normalized;
+}
+
+async function getOwnedCourse(req, instructorId, courseId) {
+  if (!mongoose.isValidObjectId(instructorId) || !mongoose.isValidObjectId(courseId)) return null;
+  if (!isOwnerOfInstructor(req.user, instructorId)) return false;
+  return Course.findOne({ _id: courseId, instructorId, ...getTenantFilter(req) });
+}
+
+// GET /api/v1/instructors/:instructorId/courses/:courseId/quiz
+// Authoring-only endpoint. Unlike the student endpoint, this intentionally
+// returns answer keys and explanations to the course owner.
+exports.getCourseQuizForEditing = async (req, res, next) => {
+  try {
+    const course = await getOwnedCourse(req, req.params.instructorId, req.params.courseId);
+    if (course === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
+    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    const quiz = await Quiz.findOne({ courseId: course._id, type: 'lecture', ...getTenantFilter(req) });
+    res.json({ data: quiz || null });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/v1/instructors/:instructorId/courses/:courseId/quiz
+exports.createCourseQuiz = async (req, res, next) => {
+  try {
+    const course = await getOwnedCourse(req, req.params.instructorId, req.params.courseId);
+    if (course === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
+    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const questions = normalizeQuestions(req.body?.questions);
+    const passingScore = Number(req.body?.passingScore);
+    const timeLimitMinutes = req.body?.timeLimitMinutes == null ? null : Number(req.body.timeLimitMinutes);
+    if (!title || title.length > 200 || !questions || !Number.isFinite(passingScore) || passingScore < 0 || passingScore > 100 || (timeLimitMinutes !== null && (!Number.isInteger(timeLimitMinutes) || timeLimitMinutes < 1))) {
+      return res.status(400).json({ message: 'بيانات الاختبار أو الأسئلة غير صالحة' });
+    }
+    if (await Quiz.exists({ courseId: course._id, type: 'lecture', ...getTenantFilter(req) })) {
+      return res.status(409).json({ message: 'يوجد اختبار لهذه الدورة بالفعل؛ استخدم التعديل بدلاً من الإنشاء' });
+    }
+    const quiz = await Quiz.create({
+      tenantId: course.tenantId,
+      courseId: course._id,
+      instructorId: course.instructorId,
+      type: 'lecture',
+      title,
+      questions,
+      passingScore,
+      timeLimitMinutes
+    });
+    course.quizId = quiz._id;
+    await course.save();
+    res.status(201).json({ data: quiz });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PATCH /api/v1/quizzes/:id
+exports.updateCourseQuiz = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'معرف الاختبار غير صالح' });
+    const quiz = await Quiz.findOne({ _id: req.params.id, type: 'lecture', ...getTenantFilter(req) });
+    if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    const course = await Course.findOne({ _id: quiz.courseId, instructorId: quiz.instructorId, ...getTenantFilter(req) });
+    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    if (!isOwnerOfInstructor(req.user, course.instructorId)) return res.status(403).json({ message: 'غير مصرح لك بتعديل هذا الاختبار' });
+
+    if (req.body.title !== undefined) {
+      if (typeof req.body.title !== 'string' || !req.body.title.trim() || req.body.title.trim().length > 200) return res.status(400).json({ message: 'عنوان الاختبار غير صالح' });
+      quiz.title = req.body.title.trim();
+    }
+    if (req.body.passingScore !== undefined) {
+      const passingScore = Number(req.body.passingScore);
+      if (!Number.isFinite(passingScore) || passingScore < 0 || passingScore > 100) return res.status(400).json({ message: 'نسبة النجاح غير صالحة' });
+      quiz.passingScore = passingScore;
+    }
+    if (req.body.timeLimitMinutes !== undefined) {
+      const timeLimitMinutes = req.body.timeLimitMinutes === null ? null : Number(req.body.timeLimitMinutes);
+      if (timeLimitMinutes !== null && (!Number.isInteger(timeLimitMinutes) || timeLimitMinutes < 1)) return res.status(400).json({ message: 'مدة الاختبار غير صالحة' });
+      quiz.timeLimitMinutes = timeLimitMinutes;
+    }
+    if (req.body.questions !== undefined) {
+      if (await QuizSubmission.exists({ quizId: quiz._id, ...getTenantFilter(req) })) {
+        return res.status(409).json({ message: 'لا يمكن تعديل أسئلة اختبار له محاولات طلاب؛ حفاظاً على سجل النتائج والإعادة' });
+      }
+      const questions = normalizeQuestions(req.body.questions);
+      if (!questions) return res.status(400).json({ message: 'أسئلة الاختبار غير صالحة' });
+      quiz.questions = questions;
+    }
+    await quiz.save();
+    res.json({ data: quiz });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /api/v1/quizzes/:id
+// Quizzes with submissions are deliberately retained: retries and historical
+// result views dereference the original question set and cannot be preserved
+// safely by a hard delete.
+exports.deleteCourseQuiz = async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'معرف الاختبار غير صالح' });
+    const quiz = await Quiz.findOne({ _id: req.params.id, type: 'lecture', ...getTenantFilter(req) });
+    if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    const course = await Course.findOne({ _id: quiz.courseId, instructorId: quiz.instructorId, ...getTenantFilter(req) });
+    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    if (!isOwnerOfInstructor(req.user, course.instructorId)) return res.status(403).json({ message: 'غير مصرح لك بحذف هذا الاختبار' });
+    if (await QuizSubmission.exists({ quizId: quiz._id, ...getTenantFilter(req) })) {
+      return res.status(409).json({ message: 'لا يمكن حذف اختبار له محاولات طلاب؛ حفاظاً على سجل النتائج' });
+    }
+    await Quiz.deleteOne({ _id: quiz._id, ...getTenantFilter(req) });
+    if (String(course.quizId) === String(quiz._id)) {
+      course.quizId = null;
+      await course.save();
+    }
+    res.json({ data: { id: quiz._id, deleted: true } });
+  } catch (err) {
+    next(err);
+  }
+};
+
 async function getMonthlyExamEligibility(quiz, user, tenantFilter) {
   const missingRequirements = [];
   const month = currentMonthString();

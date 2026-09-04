@@ -57,6 +57,9 @@ const userSchema = new mongoose.Schema(
     avatarUrl: { type: String, default: null },
     themePreference: { type: String, enum: ['light', 'dark'], default: 'light' },
     isActive: { type: Boolean, default: true },
+    // Soft-deletion is used for assistant accounts so existing related data is
+    // retained without allowing the account to authenticate or be listed.
+    deletedAt: { type: Date, default: null },
     // NEW (this batch) — only meaningful for role === 'admin'. Paymob
     // credentials are highly sensitive: paymobApiKey and
     // paymobWebhookSecret are effectively secrets equivalent to a password,

@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const Course = require('../models/Course');
 const Category = require('../models/Category');
 const Quiz = require('../models/Quiz');
@@ -20,7 +21,16 @@ async function getOptionalUser(req) {
 }
 
 async function resolveInstructorTenant(instructorId) {
-  return User.findOne({ _id: instructorId, role: 'admin' }).select('tenantId').lean();
+  const instructor = mongoose.isValidObjectId(instructorId)
+    ? await User.findOne({ _id: instructorId, role: 'admin' }).select('_id tenantId').lean()
+    : null;
+  if (instructor) return { tenantId: instructor.tenantId, instructorId: instructor._id };
+
+  // Public tenant pages use subdomains in their URLs. Resolve that identifier
+  // internally so public tenant responses never disclose ownerId.
+  const Tenant = require('../models/Tenant');
+  const tenant = await Tenant.findOne({ subdomain: instructorId, isActive: true, deletedAt: null }).select('ownerId').lean();
+  return tenant?.ownerId ? { tenantId: tenant._id, instructorId: tenant.ownerId } : null;
 }
 
 function isOwnerOfInstructor(user, instructorId) {
@@ -149,12 +159,13 @@ exports.listCourses = async (req, res, next) => {
     const instructor = await resolveInstructorTenant(instructorId);
     if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
 
-    const filter = { instructorId, tenantId: instructor.tenantId };
+    const resolvedInstructorId = instructor.instructorId;
+    const filter = { instructorId: resolvedInstructorId, tenantId: instructor.tenantId };
     if (stage) filter.stage = stage;
     if (!isOwner) filter.isPublished = true;
 
     if (category) {
-      const categoryDoc = await Category.findOne({ name: category, instructorId, stage: stage || undefined, tenantId: instructor.tenantId });
+      const categoryDoc = await Category.findOne({ name: category, instructorId: resolvedInstructorId, stage: stage || undefined, tenantId: instructor.tenantId });
       filter.categoryId = categoryDoc ? categoryDoc._id : null;
     }
 
@@ -174,7 +185,8 @@ exports.getCourse = async (req, res, next) => {
     const instructor = await resolveInstructorTenant(instructorId);
     if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
 
-    const course = await Course.findOne({ _id: courseId, instructorId, tenantId: instructor.tenantId }).populate('categoryId', 'name');
+    const resolvedInstructorId = instructor.instructorId;
+    const course = await Course.findOne({ _id: courseId, instructorId: resolvedInstructorId, tenantId: instructor.tenantId }).populate('categoryId', 'name');
     if (!course) {
       return res.status(404).json({ message: 'الدورة غير موجودة' });
     }

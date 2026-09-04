@@ -6,6 +6,9 @@ const {
   createAssistant,
   listAssistants,
   updateAssistantPermissions,
+  suspendAssistant,
+  reactivateAssistant,
+  deleteAssistant,
   getAssistantProfile
 } = require('../controllers/userController');
 
@@ -15,6 +18,9 @@ const {
 router.post('/:instructorId/assistants', protect, tenantScope, authorize('admin'), createAssistant);
 router.get('/:instructorId/assistants', protect, tenantScope, authorize('admin'), listAssistants);
 router.patch('/:instructorId/assistants/:assistantId', protect, tenantScope, authorize('admin'), updateAssistantPermissions);
+router.patch('/:instructorId/assistants/:assistantId/suspend', protect, tenantScope, authorize('admin'), suspendAssistant);
+router.patch('/:instructorId/assistants/:assistantId/reactivate', protect, tenantScope, authorize('admin'), reactivateAssistant);
+router.delete('/:instructorId/assistants/:assistantId', protect, tenantScope, authorize('admin'), deleteAssistant);
 
 // Parents may view only the assistant assigned to their child's instructor;
 // that relationship check happens in getAssistantProfile. Students are
