@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { STAGE_ENUM } = require('../constants/stages');
 
 const reelSchema = new mongoose.Schema(
   {
@@ -10,7 +11,7 @@ const reelSchema = new mongoose.Schema(
     // Nullable — null means the reel applies to all stages under this instructor.
     stage: {
       type: String,
-      enum: ['grade-7', 'grade-8', 'grade-9', 'grade-10', 'grade-11', 'grade-12'],
+      enum: STAGE_ENUM,
       default: null
     },
     viewCount: { type: Number, default: 0 }

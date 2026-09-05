@@ -40,6 +40,18 @@ function isOwnerOfInstructor(user, instructorId) {
   return false;
 }
 
+function externalAssetUrl(value, fieldLabel) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !value.trim()) throw Object.assign(new Error(`${fieldLabel} غير صالح`), { statusCode: 400 });
+  try {
+    const parsed = new URL(value.trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol');
+    return parsed.toString();
+  } catch {
+    throw Object.assign(new Error(`${fieldLabel} يجب أن يكون رابط HTTP أو HTTPS صحيحاً`), { statusCode: 400 });
+  }
+}
+
 exports.createCourse = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
@@ -58,7 +70,9 @@ exports.createCourse = async (req, res, next) => {
       category,
       accessPeriodDays,
       maxViews,
-      isPublished
+      isPublished,
+      externalVideoUrl,
+      externalHomeworkUrl
     } = req.body;
 
     let questions = req.body.questions;
@@ -88,10 +102,10 @@ exports.createCourse = async (req, res, next) => {
       : null;
     const videoUrl = req.files?.video?.[0]
       ? `/uploads/videos/${req.files.video[0].filename}`
-      : null;
+      : externalAssetUrl(externalVideoUrl, 'رابط الفيديو الخارجي') || null;
     const homeworkUrl = req.files?.homework?.[0]
       ? `/uploads/homework/${req.files.homework[0].filename}`
-      : null;
+      : externalAssetUrl(externalHomeworkUrl, 'رابط مرفق الواجب الخارجي') || null;
 
     const isPublishedBool = isPublished === 'true' || isPublished === true;
 
@@ -285,9 +299,13 @@ exports.updateCourse = async (req, res, next) => {
     }
     if (req.files?.video?.[0]) {
       course.videoUrl = `/uploads/videos/${req.files.video[0].filename}`;
+    } else if (req.body.externalVideoUrl !== undefined) {
+      course.videoUrl = externalAssetUrl(req.body.externalVideoUrl, 'رابط الفيديو الخارجي');
     }
     if (req.files?.homework?.[0]) {
       course.homeworkUrl = `/uploads/homework/${req.files.homework[0].filename}`;
+    } else if (req.body.externalHomeworkUrl !== undefined) {
+      course.homeworkUrl = externalAssetUrl(req.body.externalHomeworkUrl, 'رابط مرفق الواجب الخارجي');
     }
 
     await course.save();

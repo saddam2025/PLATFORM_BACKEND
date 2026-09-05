@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { STAGE_ENUM } = require('../constants/stages');
 
 const courseSchema = new mongoose.Schema(
   {
@@ -10,7 +11,7 @@ const courseSchema = new mongoose.Schema(
     price: { type: Number, required: true, default: 0 },
     stage: {
       type: String,
-      enum: ['grade-7', 'grade-8', 'grade-9', 'grade-10', 'grade-11', 'grade-12'],
+      enum: STAGE_ENUM,
       required: true
     },
     categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },

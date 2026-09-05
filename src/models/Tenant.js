@@ -17,6 +17,10 @@ const tenantSchema = new mongoose.Schema(
       maxViewsPerLesson: { type: Number, default: 10 },
       accessWindowDays: { type: Number, default: 10 }
     },
+    documentDelivery: {
+      provider: { type: String, default: '' },
+      publicBaseUrl: { type: String, default: '' }
+    },
     notificationPreferences: {
       smsEnabled: { type: Boolean, default: false },
       emailEnabled: { type: Boolean, default: true },

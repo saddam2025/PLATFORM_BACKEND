@@ -98,8 +98,7 @@ exports.getMyAssignment = async (req, res, next) => {
   }
 };
 
-// GET /api/v1/instructors/:instructorId/assignments/pending
-exports.getPendingAssignments = async (req, res, next) => {
+async function listInstructorAssignments(req, res, next, pendingOnly) {
   try {
     const { instructorId } = req.params;
     if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
@@ -107,7 +106,9 @@ exports.getPendingAssignments = async (req, res, next) => {
       return res.status(403).json({ message: 'غير مصرح لك بعرض قائمة واجبات هذا الحساب' });
     }
 
-    const assignments = await Assignment.find({ status: 'pending', ...getTenantFilter(req) })
+    const filter = { ...getTenantFilter(req) };
+    if (pendingOnly) filter.status = 'pending';
+    const assignments = await Assignment.find(filter)
       .populate({ path: 'courseId', match: { instructorId, ...getTenantFilter(req) }, select: 'title_ar title_en instructorId' })
       .populate({ path: 'studentId', select: 'name email' })
       .sort({ submittedAt: 1 });
@@ -120,7 +121,15 @@ exports.getPendingAssignments = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-};
+}
+
+// GET /api/v1/instructors/:instructorId/assignments/pending
+exports.getPendingAssignments = (req, res, next) => listInstructorAssignments(req, res, next, true);
+
+// GET /api/v1/instructors/:instructorId/assignments
+// The dashboard needs all real submission statuses, while the grading queue
+// remains intentionally limited to pending work.
+exports.getInstructorAssignments = (req, res, next) => listInstructorAssignments(req, res, next, false);
 
 // GET /api/v1/assignments/:id
 exports.getAssignment = async (req, res, next) => {

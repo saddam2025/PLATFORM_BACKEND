@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { STAGE_ENUM } = require('../constants/stages');
 
 const subscriptionSchema = new mongoose.Schema(
   {
@@ -7,7 +8,7 @@ const subscriptionSchema = new mongoose.Schema(
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     stage: {
       type: String,
-      enum: ['grade-7', 'grade-8', 'grade-9', 'grade-10', 'grade-11', 'grade-12'],
+      enum: STAGE_ENUM,
       required: true
     },
     month: { type: String, required: true }, // e.g. "2026-07"

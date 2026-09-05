@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { STAGE_ENUM } = require('../constants/stages');
 
 const PERMISSION_ENUM = ['can_upload_video', 'can_grade_exams', 'can_generate_access_codes'];
-const STAGE_ENUM = ['grade-7', 'grade-8', 'grade-9', 'grade-10', 'grade-11', 'grade-12'];
 
 const userSchema = new mongoose.Schema(
   {

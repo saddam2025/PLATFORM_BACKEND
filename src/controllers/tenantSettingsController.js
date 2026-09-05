@@ -34,7 +34,7 @@ function settingsResponse(tenant, admin) {
 function getSettingsUpdateData(body) {
   if (!isPlainObject(body)) throw createHttpError(400, 'بيانات الطلب غير صالحة');
   const tenantUpdates = {};
-  const tenantFields = ['name', 'logoUrl', 'supportPhone', 'supportEmail', 'themeColors', 'videoDelivery', 'notificationPreferences'];
+  const tenantFields = ['name', 'logoUrl', 'supportPhone', 'supportEmail', 'themeColors', 'videoDelivery', 'documentDelivery', 'notificationPreferences'];
   for (const field of tenantFields) {
     if (body[field] !== undefined) tenantUpdates[field] = body[field];
   }
@@ -52,6 +52,10 @@ function getSettingsUpdateData(body) {
   if (tenantUpdates.videoDelivery !== undefined) {
     const video = tenantUpdates.videoDelivery;
     if (!isPlainObject(video) || (video.provider !== undefined && typeof video.provider !== 'string') || (video.pullZone !== undefined && typeof video.pullZone !== 'string') || (video.maxViewsPerLesson !== undefined && (!Number.isInteger(video.maxViewsPerLesson) || video.maxViewsPerLesson < 1 || video.maxViewsPerLesson > 1000)) || (video.accessWindowDays !== undefined && (!Number.isInteger(video.accessWindowDays) || video.accessWindowDays < 1 || video.accessWindowDays > 3650))) throw createHttpError(400, 'قواعد الفيديو غير صالحة');
+  }
+  if (tenantUpdates.documentDelivery !== undefined) {
+    const documents = tenantUpdates.documentDelivery;
+    if (!isPlainObject(documents) || (documents.provider !== undefined && (typeof documents.provider !== 'string' || documents.provider.length > 100)) || (documents.publicBaseUrl !== undefined && (typeof documents.publicBaseUrl !== 'string' || documents.publicBaseUrl.length > 2000))) throw createHttpError(400, 'إعدادات المستندات غير صالحة');
   }
   if (tenantUpdates.notificationPreferences !== undefined) {
     const notifications = tenantUpdates.notificationPreferences;
