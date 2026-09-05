@@ -199,7 +199,10 @@ exports.getCourse = async (req, res, next) => {
 
     if (requester && requester.role === 'student') {
       const precedingCourse = await Course.findOne({
-        instructorId,
+        // `:instructorId` may be a public tenant subdomain (for example,
+        // "sohag"), which cannot be cast to Course.instructorId's ObjectId.
+        // Use the owner ID already resolved above for both URL forms.
+        instructorId: resolvedInstructorId,
         stage: course.stage,
         categoryId: course.categoryId,
         order: { $lt: course.order },

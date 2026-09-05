@@ -39,19 +39,19 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-// Avatar images are rendered by the separately-hosted frontend in development.
-// Helmet's default Cross-Origin-Resource-Policy is `same-origin`, so override
-// it only for this public image subdirectory rather than weakening headers for
-// the complete uploads tree or the application as a whole.
-app.use('/uploads/avatars', (req, res, next) => {
+// Upload assets are rendered by the separately-hosted frontend in development.
+// Helmet's default Cross-Origin-Resource-Policy is `same-origin`; override it
+// only for the public upload tree, rather than weakening it application-wide.
+// This route contains the avatar, thumbnail, and other explicit upload files
+// and never exposes the project root.
+app.use('/uploads', (req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
-}, express.static(path.join(__dirname, 'uploads', 'avatars')));
+}, express.static(path.join(__dirname, 'uploads')));
 
 // Upload middleware writes only to src/uploads/{avatars,videos,thumbnails,homework}.
 // Expose that directory at the URL prefix stored by the corresponding models;
 // never expose the project root itself.
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
