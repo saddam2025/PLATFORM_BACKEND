@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { STAGE_ENUM } = require('../constants/stages');
 
 const PERMISSION_ENUM = ['can_upload_video', 'can_grade_exams', 'can_generate_access_codes'];
+const TRACK_ENUM = ['علمي علوم', 'علمي رياضة', 'أدبي'];
 
 const userSchema = new mongoose.Schema(
   {
@@ -37,6 +38,11 @@ const userSchema = new mongoose.Schema(
       required: function () {
         return this.role === 'student';
       },
+      default: null
+    },
+    track: {
+      type: String,
+      enum: TRACK_ENUM,
       default: null
     },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -145,3 +151,4 @@ const User = mongoose.model('User', userSchema);
 module.exports = User;
 module.exports.PERMISSION_ENUM = PERMISSION_ENUM;
 module.exports.STAGE_ENUM = STAGE_ENUM;
+module.exports.TRACK_ENUM = TRACK_ENUM;

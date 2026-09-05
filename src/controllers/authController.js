@@ -4,7 +4,9 @@ const path = require('path');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Tenant = require('../models/Tenant');
-const { STAGE_ENUM } = require('../models/User');
+const { STAGE_ENUM, TRACK_ENUM } = require('../models/User');
+
+const TRACK_STAGE_IDS = new Set(['grade-10', 'baccalaureate-1', 'baccalaureate-2', 'grade-11', 'grade-12']);
 
 function generateToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
@@ -45,7 +47,7 @@ async function removeAvatarFile(avatarUrl) {
 // POST /api/v1/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, instructorId, parentAccessCode, stage } = req.body;
+    const { name, email, password, role, instructorId, parentAccessCode, stage, track } = req.body;
 
     if (!['student', 'parent'].includes(role)) {
       return res.status(400).json({ message: 'نوع الحساب غير مسموح به عبر التسجيل الذاتي' });
@@ -61,6 +63,12 @@ exports.register = async (req, res, next) => {
     if (role === 'student') {
       if (!stage || !STAGE_ENUM.includes(stage)) {
         return res.status(400).json({ message: 'المرحلة الدراسية مطلوبة وغير صالحة' });
+      }
+      if (TRACK_STAGE_IDS.has(stage) && !TRACK_ENUM.includes(track)) {
+        return res.status(400).json({ message: 'الشعبة مطلوبة وغير صالحة لهذه المرحلة' });
+      }
+      if (!TRACK_STAGE_IDS.has(stage) && track != null && track !== '') {
+        return res.status(400).json({ message: 'الشعبة غير متاحة لهذه المرحلة' });
       }
     }
 
@@ -112,7 +120,8 @@ exports.register = async (req, res, next) => {
       childId,
       // NEW: only set for students — schema default (null) applies for
       // parents, matching the field's required-only-for-student validator.
-      stage: role === 'student' ? stage : null
+      stage: role === 'student' ? stage : null,
+      track: role === 'student' && TRACK_STAGE_IDS.has(stage) ? track : null
     });
 
     await user.save();
