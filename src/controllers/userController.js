@@ -2,6 +2,18 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 
+function getPublicFrontendUrl() {
+  const value = String(process.env.FRONTEND_PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (!value || value.includes(',')) return null;
+
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function ownsInstructor(req, instructorId) {
   return req.user.role === 'super_admin' || String(req.user._id) === String(instructorId);
 }
@@ -35,6 +47,11 @@ exports.createAssistant = async (req, res, next) => {
       return res.status(400).json({ message: 'الاسم والبريد الإلكتروني مطلوبان' });
     }
 
+    const publicFrontendUrl = getPublicFrontendUrl();
+    if (!publicFrontendUrl) {
+      return res.status(500).json({ message: 'إعداد FRONTEND_PUBLIC_URL غير صالح أو مفقود' });
+    }
+
     const instructor = await User.findOne({ _id: instructorId, role: 'admin', ...req.tenantFilter }).select('tenantId');
     if (!instructor?.tenantId) {
       return res.status(404).json({ message: 'المدرس غير موجود' });
@@ -65,7 +82,7 @@ exports.createAssistant = async (req, res, next) => {
 
     await assistant.save();
 
-    const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${inviteToken}`;
+    const inviteLink = `${publicFrontendUrl}/accept-invite/${inviteToken}`;
 
     res.status(201).json({ assistant: assistant.toJSON(), inviteLink });
   } catch (err) {

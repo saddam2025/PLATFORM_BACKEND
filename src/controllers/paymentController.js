@@ -8,16 +8,100 @@ const Subscription = require('../models/Subscription');
 
 const PAYMOB_BASE_URL = 'https://accept.paymob.com/api';
 
+async function grantCourseAccess({ course, studentId, tenantId }) {
+  const purchasedAt = new Date();
+  const expiresAt = new Date(purchasedAt);
+  expiresAt.setDate(expiresAt.getDate() + course.accessPeriodDays);
+  const access = await LectureAccess.findOneAndUpdate(
+    { studentId, courseId: course._id, tenantId },
+    {
+      $setOnInsert: {
+        tenantId,
+        purchasedAt,
+        expiresAt,
+        maxViews: course.maxViews,
+        viewsUsed: 0
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  return access;
+}
+
+async function findCourseForCheckout(req) {
+  const course = await Course.findOne({ _id: req.params.courseId, ...req.tenantFilter });
+  if (!course) {
+    const error = new Error('المحاضرة غير موجودة');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!course.isPublished) {
+    const error = new Error('هذه الدورة غير متاحة للاشتراك');
+    error.statusCode = 404;
+    throw error;
+  }
+  return course;
+}
+
+// A free enrollment still creates a success transaction. This keeps revenue
+// reports and enrollment auditing consistent while accurately recording that
+// no payment provider or wallet balance was involved.
+exports.checkoutFreeCourse = async (req, res, next) => {
+  try {
+    const course = await findCourseForCheckout(req);
+    if (Number(course.price) !== 0) return res.status(400).json({ message: 'هذه الدورة ليست مجانية' });
+
+    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId });
+    await Transaction.findOneAndUpdate(
+      { tenantId: req.user.tenantId, userId: req.user._id, relatedCourseId: course._id, source: 'free' },
+      { $setOnInsert: { type: 'purchase', amount: 0, status: 'success' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.status(201).json({ data: { access, courseId: course._id } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Scratch cards credit the wallet first; this endpoint spends that wallet
+// balance and never receives a scratch-card code directly.
+exports.checkoutCourseWithWallet = async (req, res, next) => {
+  try {
+    const course = await findCourseForCheckout(req);
+    if (Number(course.price) <= 0) return res.status(400).json({ message: 'استخدم الاشتراك المجاني لهذه الدورة' });
+    const student = await User.findOne({ _id: req.user._id, ...req.tenantFilter });
+    if (!student || Number(student.walletBalance || 0) < Number(course.price)) {
+      return res.status(400).json({ message: 'رصيد المحفظة غير كافٍ' });
+    }
+
+    const existing = await LectureAccess.findOne({ studentId: req.user._id, courseId: course._id, tenantId: req.user.tenantId });
+    if (existing) return res.status(400).json({ message: 'أنت مشترك بالفعل في هذه الدورة' });
+
+    student.walletBalance -= Number(course.price);
+    await student.save();
+    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId });
+    await Transaction.create({
+      tenantId: req.user.tenantId,
+      userId: req.user._id,
+      type: 'purchase',
+      source: 'wallet',
+      amount: course.price,
+      relatedCourseId: course._id,
+      status: 'success'
+    });
+    res.status(201).json({ data: { access, walletBalance: student.walletBalance } });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // POST /api/v1/courses/:courseId/checkout/paymob
 // protect + authorize('student').
 exports.startCourseCheckout = async (req, res, next) => {
   try {
     const { courseId } = req.params;
 
-    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter });
-    if (!course) {
-      return res.status(404).json({ message: 'المحاضرة غير موجودة' });
-    }
+    const course = await findCourseForCheckout(req);
 
     // paymobApiKey/paymobWebhookSecret are select:false by default (see B7
     // User.js edit) — explicit .select() needed here since this is exactly
