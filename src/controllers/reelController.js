@@ -2,6 +2,9 @@ const Reel = require('../models/Reel');
 const Subscription = require('../models/Subscription');
 const LectureAccess = require('../models/LectureAccess');
 const Course = require('../models/Course');
+const Tenant = require('../models/Tenant');
+const User = require('../models/User');
+const mongoose = require('mongoose');
 const createNotificationsForAudience = require('../utils/createNotification');
 
 function isOwnerOfInstructor(user, instructorId) {
@@ -9,6 +12,25 @@ function isOwnerOfInstructor(user, instructorId) {
   if (user.role === 'admin') return String(user._id) === String(instructorId);
   if (user.role === 'assistant') return String(user.instructorId) === String(instructorId);
   return false;
+}
+
+// Public student URLs use the tenant subdomain (for example, "sohag"), while
+// Reel.instructorId stores the tenant owner's ObjectId. Resolve either route
+// form before using it in a Mongoose query.
+async function resolveInstructorTenant(instructorIdentifier) {
+  if (mongoose.isValidObjectId(instructorIdentifier)) {
+    const instructor = await User.findOne({ _id: instructorIdentifier, role: 'admin', isActive: true })
+      .select('_id tenantId')
+      .lean();
+    if (instructor?.tenantId) return { instructorId: instructor._id, tenantId: instructor.tenantId };
+  }
+
+  const tenant = await Tenant.findOne({
+    subdomain: String(instructorIdentifier).trim().toLowerCase(),
+    isActive: true,
+    deletedAt: null
+  }).select('_id ownerId').lean();
+  return tenant?.ownerId ? { instructorId: tenant.ownerId, tenantId: tenant._id } : null;
 }
 
 function parsePagination(query) {
@@ -98,15 +120,21 @@ exports.listReels = async (req, res, next) => {
     const { page, limit, error } = parsePagination(req.query);
     if (error) return res.status(400).json({ message: error });
 
+    const instructor = await resolveInstructorTenant(instructorId);
+    if (!instructor || String(instructor.tenantId) !== String(req.user.tenantId)) {
+      return res.status(404).json({ message: 'المدرس غير موجود' });
+    }
+    const resolvedInstructorId = instructor.instructorId;
+
     // Management users get the complete tenant-scoped list for the instructor
     // they own/work for. Student access deliberately retains its subscription
     // or lecture-access gate below.
     if (req.user.role === 'admin' || req.user.role === 'assistant') {
-      if (!isOwnerOfInstructor(req.user, instructorId)) {
+      if (!isOwnerOfInstructor(req.user, resolvedInstructorId)) {
         return res.status(403).json({ message: 'غير مصرح لك بعرض ريلز هذا الحساب' });
       }
 
-      const filter = { instructorId, ...req.tenantFilter };
+      const filter = { instructorId: resolvedInstructorId, ...req.tenantFilter };
       const [reels, total] = await Promise.all([
         Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
         Reel.countDocuments(filter)
@@ -116,7 +144,7 @@ exports.listReels = async (req, res, next) => {
 
     const hasSubscription = await Subscription.exists({
       studentId: req.user._id,
-      instructorId,
+      instructorId: resolvedInstructorId,
       status: 'active',
       ...req.tenantFilter
     });
@@ -126,7 +154,7 @@ exports.listReels = async (req, res, next) => {
       // LectureAccess doesn't store instructorId directly — it's scoped by
       // courseId, so we check whether the student has any LectureAccess
       // record for a course belonging to this instructor.
-      const instructorCourseIds = await Course.find({ instructorId, ...req.tenantFilter }).select('_id').lean();
+      const instructorCourseIds = await Course.find({ instructorId: resolvedInstructorId, ...req.tenantFilter }).select('_id').lean();
       const courseIds = instructorCourseIds.map((c) => c._id);
       hasLectureAccess = await LectureAccess.exists({
         studentId: req.user._id,
@@ -140,7 +168,7 @@ exports.listReels = async (req, res, next) => {
       return res.status(403).json({ message: 'يجب الاشتراك مع هذا المدرس لعرض الريلز' });
     }
 
-    const filter = { instructorId, ...req.tenantFilter };
+    const filter = { instructorId: resolvedInstructorId, ...req.tenantFilter };
     const [reels, total] = await Promise.all([
       Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
       Reel.countDocuments(filter)
