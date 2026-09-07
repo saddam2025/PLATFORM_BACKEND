@@ -1,5 +1,20 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Tenant = require('../models/Tenant');
+const { STAGE_ENUM } = require('../constants/stages');
+
+async function resolveInstructor(instructorId) {
+  if (mongoose.isValidObjectId(instructorId)) {
+    return User.findOne({ _id: instructorId, role: 'admin', isActive: true }).select('_id tenantId').lean();
+  }
+
+  // Public routes use the tenant subdomain (for example, "sohag"), while
+  // internal records use the admin's ObjectId. Resolve the public identifier
+  // instead of rejecting it as an invalid ObjectId.
+  const tenant = await Tenant.findOne({ subdomain: instructorId, isActive: true, deletedAt: null }).select('_id ownerId').lean();
+  if (!tenant?.ownerId) return null;
+  return { _id: tenant.ownerId, tenantId: tenant._id };
+}
 
 // GET /api/v1/instructors/:instructorId/leaderboard?stage=
 // Public route — LeaderboardPage.jsx has auth:null, visible to
@@ -19,12 +34,12 @@ exports.getLeaderboard = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
     const { stage } = req.query;
-    if (!mongoose.isValidObjectId(instructorId)) {
-      return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    if (stage && !STAGE_ENUM.includes(stage)) {
+      return res.status(400).json({ message: 'المرحلة الدراسية غير صالحة' });
     }
-    const instructorObjectId = new mongoose.Types.ObjectId(instructorId);
-    const instructor = await User.findOne({ _id: instructorObjectId, role: 'admin', isActive: true }).select('tenantId').lean();
+    const instructor = await resolveInstructor(instructorId);
     if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
+    const instructorObjectId = new mongoose.Types.ObjectId(instructor._id);
     const tenantObjectId = new mongoose.Types.ObjectId(instructor.tenantId);
 
     const studentMatch = { instructorId: instructorObjectId, role: 'student', tenantId: tenantObjectId };

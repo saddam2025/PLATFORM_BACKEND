@@ -22,11 +22,13 @@ async function getLectureAccessState({ studentId, tenantFilter, courseId, lectur
     Lecture.findOne({ _id: lectureId, courseId, isPublished: true, ...tenantFilter }).lean()
   ]);
   if (!course || !lecture) return { found: false };
-  const [courseEnrollment, accessRows, lectures, progressRows] = await Promise.all([
+  // Neither the course lecture list nor progress rows are needed to calculate
+  // this lecture's entitlement. Keeping them in this Promise.all previously
+  // referenced `lectures` while that destructuring binding was still in its
+  // temporal dead zone, causing every student lecture-list request to throw.
+  const [courseEnrollment, accessRows] = await Promise.all([
     CourseEnrollment.findOne({ studentId, courseId, ...tenantFilter, expiresAt: { $gt: now } }).lean(),
-    LectureAccess.find({ studentId, courseId: { $in: [courseId, lectureId] }, ...tenantFilter, expiresAt: { $gt: now } }).lean(),
-    Lecture.find({ courseId, isPublished: true, ...tenantFilter }).sort({ order: 1 }).select('_id videoUrl homeworkUrl quizId').lean(),
-    LectureProgress.find({ studentId, lectureId: { $in: lectures.map((item) => item._id) }, ...tenantFilter }).lean()
+    LectureAccess.find({ studentId, courseId: { $in: [courseId, lectureId] }, ...tenantFilter, expiresAt: { $gt: now } }).lean()
   ]);
   const courseAccess = accessRows.find((row) => String(row.courseId) === String(courseId));
   const lectureAccess = accessRows.find((row) => String(row.courseId) === String(lectureId));
@@ -112,24 +114,45 @@ exports.listEnrolledCourses = async (req, res, next) => {
     const courseSelection = 'title_ar title_en description_ar description_en thumbnailUrl stage price';
     const [accessRecords, enrollmentRecords] = await Promise.all([
       LectureAccess.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
-        .populate({ path: 'courseId', match: { isPublished: true }, select: courseSelection })
+        .lean()
         .sort({ purchasedAt: -1 }),
       CourseEnrollment.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
         .populate({ path: 'courseId', match: { isPublished: true }, select: courseSelection })
         .sort({ purchasedAt: -1 })
     ]);
 
-    // A student can have a legacy record and a new enrollment for the same
-    // course. Keep one dashboard card, preferring the full-course enrollment.
+    // LectureAccess.courseId is overloaded: older rows contain a Course id,
+    // while single-lecture rows contain a Lecture id. Resolve both shapes
+    // explicitly; populate() cannot do this because its declared ref is Course.
+    const accessIds = accessRecords.map((access) => access.courseId).filter(Boolean);
+    const [legacyCourses, individuallyOwnedLectures] = await Promise.all([
+      accessIds.length ? Course.find({ _id: { $in: accessIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean() : [],
+      accessIds.length ? Lecture.find({ _id: { $in: accessIds }, ...req.tenantFilter }).select('_id courseId').lean() : []
+    ]);
+    const legacyCourseById = new Map(legacyCourses.map((course) => [String(course._id), course]));
+    const lecturesByCourse = new Map();
+    for (const lecture of individuallyOwnedLectures) {
+      const id = String(lecture.courseId);
+      lecturesByCourse.set(id, [...(lecturesByCourse.get(id) || []), String(lecture._id)]);
+    }
+    const partialCourseIds = [...lecturesByCourse.keys()];
+    const partialCourses = partialCourseIds.length
+      ? await Course.find({ _id: { $in: partialCourseIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean()
+      : [];
+
+    // A student can have a legacy record and a full enrollment for the same
+    // course. Keep one dashboard card, preferring full-course enrollment.
     const coursesById = new Map();
     for (const access of accessRecords) {
-      if (!access.courseId) continue;
-      coursesById.set(String(access.courseId._id), {
+      const course = legacyCourseById.get(String(access.courseId));
+      if (!course) continue;
+      coursesById.set(String(course._id), {
         accessId: access._id,
-        course: access.courseId,
+        course,
         purchasedAt: access.purchasedAt,
         expiresAt: access.expiresAt,
-        viewsRemaining: Math.max(0, access.maxViews - access.viewsUsed)
+        viewsRemaining: Math.max(0, access.maxViews - access.viewsUsed),
+        fullAccess: true
       });
     }
     for (const enrollment of enrollmentRecords) {
@@ -140,25 +163,24 @@ exports.listEnrolledCourses = async (req, res, next) => {
         purchasedAt: enrollment.purchasedAt,
         expiresAt: enrollment.expiresAt,
         viewsRemaining: null,
-        includedWithCourse: true
+        includedWithCourse: true,
+        fullAccess: true
       });
     }
-    // A student who owns every lecture individually owns the course for
-    // dashboard/catalog purposes as well. Resolve only those access rows that
-    // are lectures; legacy full-course rows were already populated above.
-    const rawAccessIds = accessRecords.map((access) => access.courseId?._id || access.courseId).filter(Boolean);
-    const individualLectures = await Lecture.find({ _id: { $in: rawAccessIds }, ...req.tenantFilter }).select('_id courseId').lean();
-    const ownedLectureIds = new Set(rawAccessIds.map(String));
-    const individualCourseIds = [...new Set(individualLectures.map((lecture) => String(lecture.courseId)))];
-    const allLectures = individualCourseIds.length ? await Lecture.find({ courseId: { $in: individualCourseIds }, isPublished: true, ...req.tenantFilter }).select('_id courseId').lean() : [];
-    const missingCourseIds = individualCourseIds.filter((courseId) => !coursesById.has(courseId));
-    const missingCourses = missingCourseIds.length ? await Course.find({ _id: { $in: missingCourseIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean() : [];
-    for (const course of missingCourses) {
-      const courseLectures = allLectures.filter((lecture) => String(lecture.courseId) === String(course._id));
-      if (courseLectures.length && courseLectures.every((lecture) => ownedLectureIds.has(String(lecture._id)))) {
-        const matchingAccess = accessRecords.find((access) => individualLectures.some((lecture) => String(lecture._id) === String(access.courseId?._id || access.courseId) && String(lecture.courseId) === String(course._id)));
-        coursesById.set(String(course._id), { course, purchasedAt: matchingAccess?.purchasedAt || now, expiresAt: matchingAccess?.expiresAt || now, viewsRemaining: null, includedWithCourse: true, individuallyOwned: true });
-      }
+    // Any single owned lecture puts its parent course in "كورساتي"; this is
+    // deliberately not full ownership, so catalog visibility remains intact.
+    for (const course of partialCourses) {
+      if (coursesById.has(String(course._id))) continue;
+      const ownedLectureIds = lecturesByCourse.get(String(course._id)) || [];
+      const firstAccess = accessRecords.find((access) => ownedLectureIds.includes(String(access.courseId)));
+      coursesById.set(String(course._id), {
+        course,
+        purchasedAt: firstAccess?.purchasedAt || now,
+        expiresAt: firstAccess?.expiresAt || now,
+        viewsRemaining: null,
+        partialLectureCount: ownedLectureIds.length,
+        fullAccess: false
+      });
     }
     const courseIds = [...coursesById.keys()];
     const lectureCounts = courseIds.length ? await Lecture.aggregate([{ $match: { courseId: { $in: courseIds.map((id) => new (require('mongoose').Types.ObjectId)(id)) }, isPublished: true, ...req.tenantFilter } }, { $group: { _id: '$courseId', count: { $sum: 1 } } }]) : [];

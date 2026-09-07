@@ -173,17 +173,28 @@ exports.listCourses = async (req, res, next) => {
         CourseEnrollment.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean(),
         LectureAccess.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean()
       ]);
-      const ownedCourses = new Set(enrollments.map((row) => String(row.courseId)));
+      // Only a full-course entitlement removes a card from the catalog.
+      // A LectureAccess row whose `courseId` is a lecture id is partial
+      // ownership and must leave the parent course purchasable.
+      const fullyOwnedCourseIds = new Set(enrollments.map((row) => String(row.courseId)));
       const accessIds = new Set(accessRows.map((row) => String(row.courseId)));
+      const partialLectureCountByCourse = new Map();
       for (const course of courses) {
         const courseId = String(course._id);
-        if (accessIds.has(courseId)) { ownedCourses.add(courseId); continue; } // old-style full-course access
+        if (accessIds.has(courseId)) { fullyOwnedCourseIds.add(courseId); continue; } // old-style full-course access
         const courseLectures = lectures.filter((lecture) => String(lecture.courseId) === courseId);
-        if (courseLectures.length && courseLectures.every((lecture) => accessIds.has(String(lecture._id)))) ownedCourses.add(courseId);
+        const ownedLectureCount = courseLectures.filter((lecture) => accessIds.has(String(lecture._id))).length;
+        if (ownedLectureCount) partialLectureCountByCourse.set(courseId, ownedLectureCount);
       }
-      courses = courses.filter((course) => !ownedCourses.has(String(course._id)));
+      courses = courses
+        .filter((course) => !fullyOwnedCourseIds.has(String(course._id)))
+        .map((course) => ({
+          ...course.toObject(),
+          partialLectureCount: partialLectureCountByCourse.get(String(course._id)) || 0,
+          hasPartialLectureAccess: partialLectureCountByCourse.has(String(course._id))
+        }));
     }
-    res.json({ data: courses.map((course) => ({ ...course.toObject(), lectureCount: lectureCountByCourse.get(String(course._id)) || 0 })) });
+    res.json({ data: courses.map((course) => ({ ...(course.toObject ? course.toObject() : course), lectureCount: lectureCountByCourse.get(String(course._id)) || 0 })) });
   } catch (err) {
     next(err);
   }
