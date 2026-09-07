@@ -107,15 +107,20 @@ exports.listCourseLectures = async (req, res, next) => {
   try {
     const { courseId } = req.params;
     if (!mongoose.isValidObjectId(courseId)) return res.status(400).json({ message: 'معرف الكورس غير صالح' });
-    // Students must never discover a draft through its published lectures.
-    // Admin/assistant editing is intentionally handled by the dedicated route.
-    if (req.user?.role === 'student') {
-      const course = await Course.findOne({ _id: courseId, isPublished: true, ...req.tenantFilter }).select('_id');
-      if (!course) return res.status(404).json({ message: 'الكورس غير موجود' });
-    }
-    const lectures = await Lecture.find({ courseId, isPublished: true, ...req.tenantFilter }).sort({ order: 1 }).lean();
+    // This is the public course-detail feed. Resolve the tenant from the
+    // published course so visitors do not need a session, while a signed-in
+    // tenant user cannot query a course belonging to another tenant.
+    const courseFilter = { _id: courseId, isPublished: true };
+    if (req.user?.role !== 'super_admin' && req.user?.tenantId) courseFilter.tenantId = req.user.tenantId;
+    const course = await Course.findOne(courseFilter).select('_id tenantId').lean();
+    if (!course) return res.status(404).json({ message: 'الكورس غير موجود' });
+
+    // Published-only is deliberately retained for every caller. Editing
+    // drafts remains on the ownership-protected instructor endpoint.
+    const tenantFilter = { tenantId: course.tenantId };
+    const lectures = await Lecture.find({ courseId, isPublished: true, ...tenantFilter }).sort({ order: 1 }).lean();
     if (req.user?.role !== 'student') return res.json({ data: lectures });
-    const states = await Promise.all(lectures.map((lecture) => getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId, lectureId: lecture._id })));
+    const states = await Promise.all(lectures.map((lecture) => getLectureAccessState({ studentId: req.user._id, tenantFilter, courseId, lectureId: lecture._id })));
     const data = states.map((state) => ({ ...state.lecture, locked: !state.accessible, status: state.status, canPurchase: state.status === 'not_purchased', includedWithCourse: state.includedWithCourse }));
     res.json({ data });
   } catch (err) { next(err); }

@@ -42,6 +42,15 @@ const protect = async (req, res, next) => {
   }
 };
 
+// Public catalogue/detail endpoints can attach a user when a valid token is
+// present while still allowing visitors to see public data. A supplied invalid
+// token continues through protect(), which returns the normal 401 response.
+const optionalProtect = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return next();
+  return protect(req, res, next);
+};
+
 // OWASP A01 (Broken Access Control) — every protected route in this app must
 // use authorize(...) explicitly. There is no "default allow" path; a route
 // with no authorize() call still requires protect() to pass, but any
@@ -74,4 +83,4 @@ const requirePermission = (permissionName) => {
   };
 };
 
-module.exports = { protect, authorize, requirePermission };
+module.exports = { protect, optionalProtect, authorize, requirePermission };

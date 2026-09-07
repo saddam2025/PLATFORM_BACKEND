@@ -1,7 +1,8 @@
 const Reel = require('../models/Reel');
-const Subscription = require('../models/Subscription');
 const LectureAccess = require('../models/LectureAccess');
+const CourseEnrollment = require('../models/CourseEnrollment');
 const Course = require('../models/Course');
+const Lecture = require('../models/Lecture');
 const Tenant = require('../models/Tenant');
 const User = require('../models/User');
 const mongoose = require('mongoose');
@@ -108,12 +109,8 @@ exports.createReel = async (req, res, next) => {
 
 // GET /api/v1/instructors/:instructorId/reels
 // protect + authorize('student', 'admin', 'assistant').
-// CRITICAL access check per feature #8: being registered under an
-// instructorId is NOT the same as being subscribed. A student must have at
-// least one active Subscription OR LectureAccess record tied to this
-// instructor before any reels are returned — otherwise 403, distinct from
-// an empty array, so the frontend can tell "no reels yet" apart from
-// "you're not subscribed."
+// A student sees reels only when both their own academic stage matches the
+// reel and they own at least one item from the requested instructor.
 exports.listReels = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
@@ -142,33 +139,38 @@ exports.listReels = async (req, res, next) => {
       return res.json({ data: reels, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
     }
 
-    const hasSubscription = await Subscription.exists({
-      studentId: req.user._id,
-      instructorId: resolvedInstructorId,
-      status: 'active',
-      ...req.tenantFilter
-    });
-
-    let hasLectureAccess = false;
-    if (!hasSubscription) {
-      // LectureAccess doesn't store instructorId directly — it's scoped by
-      // courseId, so we check whether the student has any LectureAccess
-      // record for a course belonging to this instructor.
-      const instructorCourseIds = await Course.find({ instructorId: resolvedInstructorId, ...req.tenantFilter }).select('_id').lean();
-      const courseIds = instructorCourseIds.map((c) => c._id);
-      hasLectureAccess = await LectureAccess.exists({
-        studentId: req.user._id,
-        courseId: { $in: courseIds },
-        expiresAt: { $gt: new Date() },
-        ...req.tenantFilter
-      });
+    if (!req.user.stage) {
+      return res.status(422).json({ message: 'المرحلة الدراسية غير مسجلة في حساب الطالب' });
     }
 
-    if (!hasSubscription && !hasLectureAccess) {
-      return res.status(403).json({ message: 'يجب الاشتراك مع هذا المدرس لعرض الريلز' });
+    // Condition 1: ownership is evaluated only against this instructor's
+    // tenant-scoped courses and lectures. LectureAccess is intentionally
+    // checked with both IDs because legacy rows use a Course id while new
+    // single-lecture rows use a Lecture id.
+    const instructorCourses = await Course.find({ instructorId: resolvedInstructorId, ...req.tenantFilter }).select('_id').lean();
+    const courseIds = instructorCourses.map((course) => course._id);
+    const instructorLectures = courseIds.length
+      ? await Lecture.find({ courseId: { $in: courseIds }, ...req.tenantFilter }).select('_id').lean()
+      : [];
+    const protectedItemIds = [...courseIds, ...instructorLectures.map((lecture) => lecture._id)];
+    const now = new Date();
+    const [hasCourseEnrollment, hasLectureAccess] = await Promise.all([
+      courseIds.length
+        ? CourseEnrollment.exists({ studentId: req.user._id, courseId: { $in: courseIds }, expiresAt: { $gt: now }, ...req.tenantFilter })
+        : false,
+      protectedItemIds.length
+        ? LectureAccess.exists({ studentId: req.user._id, courseId: { $in: protectedItemIds }, expiresAt: { $gt: now }, ...req.tenantFilter })
+        : false
+    ]);
+
+    if (!hasCourseEnrollment && !hasLectureAccess) {
+      return res.json({ data: [], pagination: { page, limit, total: 0, totalPages: 0 } });
     }
 
-    const filter = { instructorId: resolvedInstructorId, ...req.tenantFilter };
+    // Condition 2: stage equality is a separate filter; global/null-stage
+    // reels are deliberately excluded because this student endpoint requires
+    // an exact stage match.
+    const filter = { instructorId: resolvedInstructorId, stage: req.user.stage, ...req.tenantFilter };
     const [reels, total] = await Promise.all([
       Reel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
       Reel.countDocuments(filter)

@@ -7,6 +7,7 @@ const {
   checkMonthlyExamEligibility,
   submitQuiz,
   getSubmission,
+  listMyExamGrades,
   getRetryQuiz,
   submitRetry,
   getCourseQuizForEditing,
@@ -24,6 +25,7 @@ const quizAuthoringGate = (req, res, next) => {
 authoringRouter.get('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, getCourseQuizForEditing);
 authoringRouter.post('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, createCourseQuiz);
 
+router.get('/me/exam-grades', protect, tenantScope, authorize('student'), listMyExamGrades);
 router.get('/:id/eligibility', protect, tenantScope, authorize('student'), checkMonthlyExamEligibility);
 router.get('/submissions/:submissionId', protect, tenantScope, getSubmission); // ownership checked inside
 router.post('/submissions/:submissionId/retry', protect, tenantScope, authorize('student'), getRetryQuiz);

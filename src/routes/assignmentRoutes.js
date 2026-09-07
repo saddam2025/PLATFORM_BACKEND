@@ -9,7 +9,8 @@ const {
   getPendingAssignments,
   getInstructorAssignments,
   getAssignment,
-  gradeAssignment
+  gradeAssignment,
+  listMyAssignmentGrades
 } = require('../controllers/assignmentController');
 
 const gradeGate = (req, res, next) => {
@@ -17,6 +18,7 @@ const gradeGate = (req, res, next) => {
   return requirePermission('can_grade_exams')(req, res, next);
 };
 
+router.get('/students/me/assignment-grades', protect, tenantScope, authorize('student'), listMyAssignmentGrades);
 router.post('/courses/:courseId/lectures/:lectureId/assignments/submit', protect, tenantScope, authorize('student'), uploadAssignment, submitAssignment);
 router.get('/courses/:courseId/lectures/:lectureId/assignments/mine', protect, tenantScope, authorize('student'), getMyAssignment);
 router.get('/instructors/:instructorId/assignments/pending', protect, tenantScope, authorize('admin', 'assistant'), gradeGate, getPendingAssignments);

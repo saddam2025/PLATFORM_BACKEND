@@ -185,6 +185,7 @@ exports.gradeAssignment = async (req, res, next) => {
     assignment.status = status;
     assignment.grade = status === 'graded' ? grade : null;
     assignment.feedback = feedback.trim();
+    assignment.gradedAt = new Date();
     await assignment.save();
 
     await createNotificationsForAudience({
@@ -203,4 +204,12 @@ exports.gradeAssignment = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+
+exports.listMyAssignmentGrades = async (req, res, next) => {
+  try {
+    const assignments = await Assignment.find({ studentId: req.user._id, status: { $in: ['graded', 'resubmit'] }, ...getTenantFilter(req) }).sort({ gradedAt: -1, updatedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean();
+    res.json({ data: assignments.map((assignment) => ({ _id: assignment._id, grade: assignment.grade, feedback: assignment.feedback, status: assignment.status, lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null, courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null, gradedAt: assignment.gradedAt || assignment.updatedAt })) });
+  } catch (err) { next(err); }
 };

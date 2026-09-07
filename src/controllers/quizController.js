@@ -510,3 +510,49 @@ exports.checkMonthlyExamEligibility = async (req, res, next) => {
     next(err);
   }
 };
+
+
+// GET /api/v1/quizzes/me/exam-grades
+// Returns only the authenticated student's submissions in the active tenant.
+exports.listMyExamGrades = async (req, res, next) => {
+  try {
+    const submissions = await QuizSubmission.find({
+      studentId: req.user._id,
+      ...req.tenantFilter
+    }).sort({ submittedAt: -1 }).lean();
+
+    const quizIds = [...new Set(submissions.map((item) => String(item.quizId)))];
+    const quizzes = quizIds.length ? await Quiz.find({ _id: { $in: quizIds }, ...req.tenantFilter }).select('title lectureId courseId type').lean() : [];
+    const quizById = new Map(quizzes.map((item) => [String(item._id), item]));
+
+    const lectureIds = [...new Set(quizzes.filter((item) => item.lectureId).map((item) => String(item.lectureId)))];
+    const lecturesByQuiz = quizIds.length ? await Lecture.find({ quizId: { $in: quizIds }, ...req.tenantFilter }).select('quizId courseId title_ar title_en').lean() : [];
+    const lecturesById = lectureIds.length ? await Lecture.find({ _id: { $in: lectureIds }, ...req.tenantFilter }).select('_id courseId title_ar title_en').lean() : [];
+    const lectureByQuizId = new Map(lecturesByQuiz.map((item) => [String(item.quizId), item]));
+    const lectureById = new Map(lecturesById.map((item) => [String(item._id), item]));
+
+    const courseIds = [...new Set(quizzes.map((quiz) => {
+      const lecture = lectureById.get(String(quiz.lectureId)) || lectureByQuizId.get(String(quiz._id));
+      return lecture?.courseId || quiz.courseId;
+    }).filter(Boolean).map(String))];
+    const courses = courseIds.length ? await Course.find({ _id: { $in: courseIds }, ...req.tenantFilter }).select('title_ar title_en').lean() : [];
+    const courseById = new Map(courses.map((item) => [String(item._id), item]));
+
+    const data = submissions.map((submission) => {
+      const quiz = quizById.get(String(submission.quizId));
+      const lecture = quiz && (lectureById.get(String(quiz.lectureId)) || lectureByQuizId.get(String(quiz._id)));
+      const course = courseById.get(String(lecture?.courseId || quiz?.courseId));
+      return {
+        _id: submission._id,
+        score: submission.score,
+        passed: submission.passed,
+        submittedAt: submission.submittedAt,
+        quizTitle: quiz?.title || null,
+        lectureTitle: lecture?.title_ar || lecture?.title_en || null,
+        courseTitle: course?.title_ar || course?.title_en || null
+      };
+    });
+
+    res.json({ data });
+  } catch (err) { next(err); }
+};
