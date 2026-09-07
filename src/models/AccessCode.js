@@ -6,6 +6,8 @@ const accessCodeSchema = new mongoose.Schema(
     // Same hashing approach as ScratchCard — never store the plaintext.
     code_hash: { type: String, required: true, unique: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
+    lectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture', default: null },
+    type: { type: String, enum: ['full_course', 'single_lecture'], default: 'full_course', required: true },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     generatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // admin or assistant
     redeemedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

@@ -17,8 +17,8 @@ const gradeGate = (req, res, next) => {
   return requirePermission('can_grade_exams')(req, res, next);
 };
 
-router.post('/courses/:courseId/assignments/submit', protect, tenantScope, authorize('student'), uploadAssignment, submitAssignment);
-router.get('/courses/:courseId/assignments/mine', protect, tenantScope, authorize('student'), getMyAssignment);
+router.post('/courses/:courseId/lectures/:lectureId/assignments/submit', protect, tenantScope, authorize('student'), uploadAssignment, submitAssignment);
+router.get('/courses/:courseId/lectures/:lectureId/assignments/mine', protect, tenantScope, authorize('student'), getMyAssignment);
 router.get('/instructors/:instructorId/assignments/pending', protect, tenantScope, authorize('admin', 'assistant'), gradeGate, getPendingAssignments);
 router.get('/instructors/:instructorId/assignments', protect, tenantScope, authorize('admin', 'assistant'), gradeGate, getInstructorAssignments);
 router.get('/assignments/:id', protect, tenantScope, getAssignment);

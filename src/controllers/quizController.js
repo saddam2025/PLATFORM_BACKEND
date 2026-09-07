@@ -2,6 +2,8 @@ const Quiz = require('../models/Quiz');
 const QuizSubmission = require('../models/QuizSubmission');
 const LectureProgress = require('../models/LectureProgress');
 const Course = require('../models/Course');
+const Lecture = require('../models/Lecture');
+const { getLectureAccessState } = require('./lectureAccessController');
 const Subscription = require('../models/Subscription');
 const gradeSubmission = require('../utils/gradeQuiz');
 const createNotificationsForAudience = require('../utils/createNotification');
@@ -69,15 +71,23 @@ async function getOwnedCourse(req, instructorId, courseId) {
   return Course.findOne({ _id: courseId, instructorId, ...getTenantFilter(req) });
 }
 
+async function getOwnedLecture(req) {
+  const course = await getOwnedCourse(req, req.params.instructorId, req.params.courseId);
+  if (!course || course === false) return course;
+  if (!mongoose.isValidObjectId(req.params.lectureId)) return null;
+  const lecture = await Lecture.findOne({ _id: req.params.lectureId, courseId: course._id, ...getTenantFilter(req) });
+  return lecture ? { course, lecture } : null;
+}
+
 // GET /api/v1/instructors/:instructorId/courses/:courseId/quiz
 // Authoring-only endpoint. Unlike the student endpoint, this intentionally
 // returns answer keys and explanations to the course owner.
 exports.getCourseQuizForEditing = async (req, res, next) => {
   try {
-    const course = await getOwnedCourse(req, req.params.instructorId, req.params.courseId);
-    if (course === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
-    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
-    const quiz = await Quiz.findOne({ courseId: course._id, type: 'lecture', ...getTenantFilter(req) });
+    const owned = await getOwnedLecture(req);
+    if (owned === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
+    if (!owned) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    const quiz = await Quiz.findOne({ lectureId: owned.lecture._id, type: 'lecture', ...getTenantFilter(req) });
     res.json({ data: quiz || null });
   } catch (err) {
     next(err);
@@ -87,9 +97,10 @@ exports.getCourseQuizForEditing = async (req, res, next) => {
 // POST /api/v1/instructors/:instructorId/courses/:courseId/quiz
 exports.createCourseQuiz = async (req, res, next) => {
   try {
-    const course = await getOwnedCourse(req, req.params.instructorId, req.params.courseId);
-    if (course === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
-    if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    const owned = await getOwnedLecture(req);
+    if (owned === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة اختبارات هذا الحساب' });
+    if (!owned) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    const { course, lecture } = owned;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const questions = normalizeQuestions(req.body?.questions);
     const passingScore = Number(req.body?.passingScore);
@@ -97,12 +108,13 @@ exports.createCourseQuiz = async (req, res, next) => {
     if (!title || title.length > 200 || !questions || !Number.isFinite(passingScore) || passingScore < 0 || passingScore > 100 || (timeLimitMinutes !== null && (!Number.isInteger(timeLimitMinutes) || timeLimitMinutes < 1))) {
       return res.status(400).json({ message: 'بيانات الاختبار أو الأسئلة غير صالحة' });
     }
-    if (await Quiz.exists({ courseId: course._id, type: 'lecture', ...getTenantFilter(req) })) {
-      return res.status(409).json({ message: 'يوجد اختبار لهذه الدورة بالفعل؛ استخدم التعديل بدلاً من الإنشاء' });
+    if (await Quiz.exists({ lectureId: lecture._id, type: 'lecture', ...getTenantFilter(req) })) {
+      return res.status(409).json({ message: 'يوجد اختبار لهذه المحاضرة بالفعل؛ استخدم التعديل بدلاً من الإنشاء' });
     }
     const quiz = await Quiz.create({
       tenantId: course.tenantId,
       courseId: course._id,
+      lectureId: lecture._id,
       instructorId: course.instructorId,
       type: 'lecture',
       title,
@@ -110,8 +122,8 @@ exports.createCourseQuiz = async (req, res, next) => {
       passingScore,
       timeLimitMinutes
     });
-    course.quizId = quiz._id;
-    await course.save();
+    lecture.quizId = quiz._id;
+    await lecture.save();
     res.status(201).json({ data: quiz });
   } catch (err) {
     next(err);
@@ -230,6 +242,11 @@ exports.getQuiz = async (req, res, next) => {
   try {
     const quiz = await Quiz.findOne({ _id: req.params.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    if (req.user.role === 'student' && quiz.type === 'lecture') {
+      if (!quiz.lectureId || !quiz.courseId) return res.status(410).json({ message: 'هذا اختبار قديم غير مرتبط بمحاضرة' });
+      const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: quiz.courseId, lectureId: quiz.lectureId });
+      if (!state.accessible) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
+    }
     if (req.user.role === 'student' && quiz.type === 'monthly_exam') {
       const eligibility = await getMonthlyExamEligibility(quiz, req.user, req.tenantFilter);
       if (!eligibility.eligible) return res.status(403).json({ message: eligibility.reason, ...eligibility });
@@ -257,6 +274,9 @@ exports.submitQuiz = async (req, res, next) => {
     // a client-supplied answer key or score.
     const quiz = await Quiz.findOne({ _id: quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    if (quiz.type !== 'lecture' || !quiz.lectureId || !quiz.courseId) return res.status(400).json({ message: 'هذا الاختبار غير مرتبط بمحاضرة صالحة' });
+    const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: quiz.courseId, lectureId: quiz.lectureId });
+    if (!state.accessible) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
 
     const { score, passed, incorrectQuestionIndexes } = gradeSubmission(quiz, answers);
 
@@ -285,10 +305,10 @@ exports.submitQuiz = async (req, res, next) => {
     // happens in courseController.getCourse (updated below) by checking this
     // same LectureProgress record for the PRECEDING course — nothing about
     // unlocking is computed or stored here.
-    if (quiz.courseId && passed) {
+    if (quiz.lectureId && passed) {
       await LectureProgress.findOneAndUpdate(
-        { studentId: req.user._id, courseId: quiz.courseId, ...req.tenantFilter },
-        { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId } },
+        { studentId: req.user._id, lectureId: quiz.lectureId, ...req.tenantFilter },
+        { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId, studentId: req.user._id, courseId: quiz.courseId, lectureId: quiz.lectureId } },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
@@ -448,10 +468,10 @@ exports.submitRetry = async (req, res, next) => {
       original.passed = true;
       await original.save();
 
-      if (quiz.courseId) {
+      if (quiz.lectureId) {
         await LectureProgress.findOneAndUpdate(
-          { studentId: req.user._id, courseId: quiz.courseId, ...req.tenantFilter },
-          { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId } },
+          { studentId: req.user._id, lectureId: quiz.lectureId, ...req.tenantFilter },
+          { $set: { quizPassed: true }, $setOnInsert: { tenantId: req.user.tenantId, studentId: req.user._id, courseId: quiz.courseId, lectureId: quiz.lectureId } },
           { upsert: true, new: true, setDefaultsOnInsert: true }
         );
       }

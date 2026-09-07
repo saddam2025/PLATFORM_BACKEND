@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
 const Assignment = require('../models/Assignment');
 const Course = require('../models/Course');
+const Lecture = require('../models/Lecture');
 const LectureProgress = require('../models/LectureProgress');
+const { getLectureAccessState } = require('./lectureAccessController');
 const createNotificationsForAudience = require('../utils/createNotification');
 
 function getTenantFilter(req) {
@@ -17,7 +19,7 @@ function isOwnerOfInstructor(user, instructorId) {
 
 async function getCourse(req, courseId) {
   if (!mongoose.isValidObjectId(courseId)) return null;
-  return Course.findOne({ _id: courseId, ...getTenantFilter(req) });
+  return Course.findOne({ _id: courseId, isPublished: true, ...getTenantFilter(req) });
 }
 
 function assignmentFileUrl(file) {
@@ -30,7 +32,7 @@ function assignmentFileUrl(file) {
 // request, never from multipart form fields.
 exports.submitAssignment = async (req, res, next) => {
   try {
-    const { courseId } = req.params;
+    const { courseId, lectureId } = req.params;
     const submissionNote = typeof req.body?.submissionNote === 'string' ? req.body.submissionNote.trim() : '';
 
     if (submissionNote.length > 5000) {
@@ -42,8 +44,13 @@ exports.submitAssignment = async (req, res, next) => {
 
     const course = await getCourse(req, courseId);
     if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
+    const lecture = lectureId ? await Lecture.findOne({ _id: lectureId, courseId: course._id, ...getTenantFilter(req) }) : null;
+    if (lectureId && !lecture) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    if (!lecture) return res.status(400).json({ message: 'يجب تسليم الواجب من خلال محاضرة محددة' });
+    const accessState = await getLectureAccessState({ studentId: req.user._id, tenantFilter: getTenantFilter(req), courseId: course._id, lectureId: lecture._id });
+    if (!accessState.accessible) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
 
-    const filter = { courseId: course._id, studentId: req.user._id, ...getTenantFilter(req) };
+    const filter = { courseId: course._id, lectureId: lecture?._id || null, studentId: req.user._id, ...getTenantFilter(req) };
     const update = {
       $set: {
         submissionNote,
@@ -52,7 +59,7 @@ exports.submitAssignment = async (req, res, next) => {
         feedback: '',
         submittedAt: new Date()
       },
-      $setOnInsert: { tenantId: course.tenantId, studentId: req.user._id, courseId: course._id }
+      $setOnInsert: { tenantId: course.tenantId, studentId: req.user._id, courseId: course._id, lectureId: lecture?._id || null }
     };
     if (req.file) update.$set.submissionFileUrl = assignmentFileUrl(req.file);
 
@@ -66,8 +73,8 @@ exports.submitAssignment = async (req, res, next) => {
     // This is the progress signal used by CourseController's next-lecture
     // lock calculation; it is scoped to the same student/course/tenant.
     await LectureProgress.findOneAndUpdate(
-      { studentId: req.user._id, courseId: course._id, ...getTenantFilter(req) },
-      { $set: { homeworkCompleted: true }, $setOnInsert: { tenantId: course.tenantId } },
+      { studentId: req.user._id, lectureId: lecture._id, ...getTenantFilter(req) },
+      { $set: { homeworkCompleted: true }, $setOnInsert: { tenantId: course.tenantId, studentId: req.user._id, courseId: course._id, lectureId: lecture._id } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
@@ -87,8 +94,11 @@ exports.getMyAssignment = async (req, res, next) => {
     const course = await getCourse(req, req.params.courseId);
     if (!course) return res.status(404).json({ message: 'الدورة غير موجودة' });
 
+    const lecture = req.params.lectureId ? await Lecture.findOne({ _id: req.params.lectureId, courseId: course._id, ...getTenantFilter(req) }) : null;
+    if (req.params.lectureId && !lecture) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     const assignment = await Assignment.findOne({
       courseId: course._id,
+      lectureId: lecture?._id || null,
       studentId: req.user._id,
       ...getTenantFilter(req)
     });

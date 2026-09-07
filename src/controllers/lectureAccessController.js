@@ -1,11 +1,176 @@
 const LectureAccess = require('../models/LectureAccess');
+const CourseEnrollment = require('../models/CourseEnrollment');
 const VideoProgress = require('../models/VideoProgress');
 const Course = require('../models/Course');
+const Lecture = require('../models/Lecture');
+const LectureProgress = require('../models/LectureProgress');
+const jwt = require('jsonwebtoken');
+const path = require('path');
 
 function daysRemaining(expiresAt) {
   const diffMs = new Date(expiresAt) - new Date();
   return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 }
+
+// Shared lecture-scoped entitlement for the detail list and the player gate.
+// Legacy full-course rows use LectureAccess.courseId = courseId; Part C's
+// individual rows use that legacy key = lectureId.
+async function getLectureAccessState({ studentId, tenantFilter, courseId, lectureId }) {
+  const now = new Date();
+  const [course, lecture] = await Promise.all([
+    Course.findOne({ _id: courseId, isPublished: true, ...tenantFilter }).select('_id').lean(),
+    Lecture.findOne({ _id: lectureId, courseId, isPublished: true, ...tenantFilter }).lean()
+  ]);
+  if (!course || !lecture) return { found: false };
+  const [courseEnrollment, accessRows, lectures, progressRows] = await Promise.all([
+    CourseEnrollment.findOne({ studentId, courseId, ...tenantFilter, expiresAt: { $gt: now } }).lean(),
+    LectureAccess.find({ studentId, courseId: { $in: [courseId, lectureId] }, ...tenantFilter, expiresAt: { $gt: now } }).lean(),
+    Lecture.find({ courseId, isPublished: true, ...tenantFilter }).sort({ order: 1 }).select('_id videoUrl homeworkUrl quizId').lean(),
+    LectureProgress.find({ studentId, lectureId: { $in: lectures.map((item) => item._id) }, ...tenantFilter }).lean()
+  ]);
+  const courseAccess = accessRows.find((row) => String(row.courseId) === String(courseId));
+  const lectureAccess = accessRows.find((row) => String(row.courseId) === String(lectureId));
+  // Lectures are independently selectable. Progress gates the student's next
+  // paid checkout, not a numerical lecture sequence.
+  const sequenceUnlocked = true;
+  const isFree = Number(lecture.price) === 0;
+  const isPurchased = Boolean(courseEnrollment || courseAccess || lectureAccess);
+  const accessible = isFree || isPurchased;
+  const status = isFree ? 'free' : isPurchased ? 'purchased' : 'not_purchased';
+  return { found: true, lecture, accessible, status, sequenceUnlocked, isFree, isPurchased, access: lectureAccess || courseAccess || null, includedWithCourse: Boolean(courseEnrollment || courseAccess) };
+}
+
+exports.getLectureAccessState = getLectureAccessState;
+
+exports.startLectureView = async (req, res, next) => {
+  try {
+    const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: req.params.courseId, lectureId: req.params.lectureId });
+    if (!state.found) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    if (!state.accessible) return res.status(403).json({ message: state.status === 'pending_previous' ? 'أكمل المحاضرة السابقة أولاً' : 'لم يتم شراء هذه المحاضرة' });
+    if (state.access && state.access.viewsUsed >= state.access.maxViews) return res.status(403).json({ message: 'لقد استنفدت عدد مرات المشاهدة المسموحة' });
+    if (state.access) { await LectureAccess.updateOne({ _id: state.access._id, studentId: req.user._id, ...req.tenantFilter }, { $inc: { viewsUsed: 1 } }); state.access.viewsUsed += 1; }
+    let videoUrl = null;
+    if (state.lecture.videoUrl?.startsWith('/uploads/videos/')) {
+      const mediaToken = jwt.sign({ sub: String(req.user._id), tenantId: String(req.user.tenantId), courseId: String(req.params.courseId), lectureId: String(req.params.lectureId), media: true }, process.env.JWT_SECRET, { expiresIn: '5m' });
+      videoUrl = `${req.protocol}://${req.get('host')}/api/v1/courses/${req.params.courseId}/lectures/${req.params.lectureId}/video?token=${encodeURIComponent(mediaToken)}`;
+    }
+    res.json({ data: { lecture: { ...state.lecture, videoUrl: null }, videoUrl, viewsRemaining: state.access ? Math.max(0, state.access.maxViews - state.access.viewsUsed) : null, daysRemaining: state.access ? daysRemaining(state.access.expiresAt) : null, watermark: { name: req.user.name, studentId: req.user._id } } });
+  } catch (err) { next(err); }
+};
+
+async function assertLectureAccess(req) {
+  const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: req.params.courseId, lectureId: req.params.lectureId });
+  if (!state.found) throw Object.assign(new Error('المحاضرة غير موجودة'), { statusCode: 404 });
+  if (!state.accessible) throw Object.assign(new Error('لا تملك صلاحية هذه المحاضرة'), { statusCode: 403 });
+  return state;
+}
+
+exports.updateLectureWatchProgress = async (req, res, next) => {
+  try {
+    await assertLectureAccess(req);
+    const { watchedSeconds, sessionSeconds, totalDurationSeconds } = req.body;
+    if (typeof watchedSeconds !== 'number' || typeof sessionSeconds !== 'number') return res.status(400).json({ message: 'بيانات التقدم غير صالحة' });
+    const filter = { studentId: req.user._id, lectureId: req.params.lectureId, ...req.tenantFilter };
+    const progress = await VideoProgress.findOneAndUpdate(filter, { $setOnInsert: { tenantId: req.user.tenantId, studentId: req.user._id, courseId: req.params.courseId, lectureId: req.params.lectureId }, $max: { watchedSeconds }, $set: { totalDurationSeconds: Number(totalDurationSeconds) || 0, lastWatchedAt: new Date() }, $push: { watchHistory: { watchedAt: new Date(), sessionSeconds } } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    progress.watchPercentage = progress.totalDurationSeconds > 0 ? Math.min(100, Math.round((progress.watchedSeconds / progress.totalDurationSeconds) * 100)) : 0;
+    progress.completed = progress.watchPercentage >= 90;
+    if (progress.completed) await LectureProgress.findOneAndUpdate({ studentId: req.user._id, lectureId: req.params.lectureId, ...req.tenantFilter }, { $set: { videoCompleted: true }, $setOnInsert: { tenantId: req.user.tenantId, studentId: req.user._id, courseId: req.params.courseId, lectureId: req.params.lectureId } }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await progress.save();
+    res.json({ data: progress });
+  } catch (err) { next(err); }
+};
+
+exports.getLectureWatchProgress = async (req, res, next) => {
+  try { await assertLectureAccess(req); const progress = await VideoProgress.findOne({ studentId: req.user._id, lectureId: req.params.lectureId, ...req.tenantFilter }); res.json({ data: progress || null }); } catch (err) { next(err); }
+};
+
+// Browser video elements cannot attach the app's Bearer token, so start-view
+// issues a short-lived signed media token. This handler validates that token
+// AND re-runs the tenant/student entitlement check on every range/content
+// request before serving the local video file.
+exports.streamLectureVideo = async (req, res, next) => {
+  try {
+    const claims = jwt.verify(req.query.token, process.env.JWT_SECRET);
+    if (!claims.media || String(claims.courseId) !== String(req.params.courseId) || String(claims.lectureId) !== String(req.params.lectureId)) return res.status(403).json({ message: 'رابط الفيديو غير صالح' });
+    const state = await getLectureAccessState({ studentId: claims.sub, tenantFilter: { tenantId: claims.tenantId }, courseId: req.params.courseId, lectureId: req.params.lectureId });
+    if (!state.found || !state.accessible || !state.lecture.videoUrl?.startsWith('/uploads/videos/')) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
+    const fileName = path.basename(state.lecture.videoUrl);
+    return res.sendFile(fileName, { root: path.join(__dirname, '..', 'uploads', 'videos'), headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' } });
+  } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') return res.status(403).json({ message: 'رابط الفيديو غير صالح أو منتهي' });
+    return next(err);
+  }
+};
+
+// GET /api/v1/courses/enrolled
+// The dashboard supports both access schemes during the Course -> Lectures
+// transition: legacy per-course LectureAccess rows and new CourseEnrollment
+// rows both establish ownership.
+exports.listEnrolledCourses = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const courseSelection = 'title_ar title_en description_ar description_en thumbnailUrl stage price';
+    const [accessRecords, enrollmentRecords] = await Promise.all([
+      LectureAccess.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
+        .populate({ path: 'courseId', match: { isPublished: true }, select: courseSelection })
+        .sort({ purchasedAt: -1 }),
+      CourseEnrollment.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
+        .populate({ path: 'courseId', match: { isPublished: true }, select: courseSelection })
+        .sort({ purchasedAt: -1 })
+    ]);
+
+    // A student can have a legacy record and a new enrollment for the same
+    // course. Keep one dashboard card, preferring the full-course enrollment.
+    const coursesById = new Map();
+    for (const access of accessRecords) {
+      if (!access.courseId) continue;
+      coursesById.set(String(access.courseId._id), {
+        accessId: access._id,
+        course: access.courseId,
+        purchasedAt: access.purchasedAt,
+        expiresAt: access.expiresAt,
+        viewsRemaining: Math.max(0, access.maxViews - access.viewsUsed)
+      });
+    }
+    for (const enrollment of enrollmentRecords) {
+      if (!enrollment.courseId) continue;
+      coursesById.set(String(enrollment.courseId._id), {
+        accessId: enrollment._id,
+        course: enrollment.courseId,
+        purchasedAt: enrollment.purchasedAt,
+        expiresAt: enrollment.expiresAt,
+        viewsRemaining: null,
+        includedWithCourse: true
+      });
+    }
+    // A student who owns every lecture individually owns the course for
+    // dashboard/catalog purposes as well. Resolve only those access rows that
+    // are lectures; legacy full-course rows were already populated above.
+    const rawAccessIds = accessRecords.map((access) => access.courseId?._id || access.courseId).filter(Boolean);
+    const individualLectures = await Lecture.find({ _id: { $in: rawAccessIds }, ...req.tenantFilter }).select('_id courseId').lean();
+    const ownedLectureIds = new Set(rawAccessIds.map(String));
+    const individualCourseIds = [...new Set(individualLectures.map((lecture) => String(lecture.courseId)))];
+    const allLectures = individualCourseIds.length ? await Lecture.find({ courseId: { $in: individualCourseIds }, isPublished: true, ...req.tenantFilter }).select('_id courseId').lean() : [];
+    const missingCourseIds = individualCourseIds.filter((courseId) => !coursesById.has(courseId));
+    const missingCourses = missingCourseIds.length ? await Course.find({ _id: { $in: missingCourseIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean() : [];
+    for (const course of missingCourses) {
+      const courseLectures = allLectures.filter((lecture) => String(lecture.courseId) === String(course._id));
+      if (courseLectures.length && courseLectures.every((lecture) => ownedLectureIds.has(String(lecture._id)))) {
+        const matchingAccess = accessRecords.find((access) => individualLectures.some((lecture) => String(lecture._id) === String(access.courseId?._id || access.courseId) && String(lecture.courseId) === String(course._id)));
+        coursesById.set(String(course._id), { course, purchasedAt: matchingAccess?.purchasedAt || now, expiresAt: matchingAccess?.expiresAt || now, viewsRemaining: null, includedWithCourse: true, individuallyOwned: true });
+      }
+    }
+    const courseIds = [...coursesById.keys()];
+    const lectureCounts = courseIds.length ? await Lecture.aggregate([{ $match: { courseId: { $in: courseIds.map((id) => new (require('mongoose').Types.ObjectId)(id)) }, isPublished: true, ...req.tenantFilter } }, { $group: { _id: '$courseId', count: { $sum: 1 } } }]) : [];
+    const countByCourse = new Map(lectureCounts.map((row) => [String(row._id), row.count]));
+    for (const [courseId, value] of coursesById) value.course = { ...(value.course.toObject ? value.course.toObject() : value.course), lectureCount: countByCourse.get(courseId) || 0 };
+    const courses = [...coursesById.values()]
+      .sort((left, right) => new Date(right.purchasedAt) - new Date(left.purchasedAt));
+    res.json({ data: courses });
+  } catch (err) {
+    next(err);
+  }
+};
 
 // POST /api/v1/courses/:courseId/start-view
 // protect + authorize('student'). This is the gatekeeper CoursePlayerPage.jsx
@@ -28,7 +193,7 @@ exports.startView = async (req, res, next) => {
       return res.status(403).json({ message: 'لقد استنفدت عدد مرات المشاهدة المسموحة' });
     }
 
-    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter });
+    const course = await Course.findOne({ _id: courseId, isPublished: true, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }
@@ -73,7 +238,7 @@ exports.updateWatchProgress = async (req, res, next) => {
       return res.status(400).json({ message: 'بيانات التقدم غير صالحة' });
     }
 
-    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter }).select('_id');
+    const course = await Course.findOne({ _id: courseId, isPublished: true, ...req.tenantFilter }).select('_id');
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }
@@ -129,7 +294,7 @@ exports.updateWatchProgress = async (req, res, next) => {
 exports.getWatchProgress = async (req, res, next) => {
   try {
     const { courseId } = req.params;
-    const course = await Course.findOne({ _id: courseId, ...req.tenantFilter }).select('_id');
+    const course = await Course.findOne({ _id: courseId, isPublished: true, ...req.tenantFilter }).select('_id');
     if (!course) {
       return res.status(404).json({ message: 'المحاضرة غير موجودة' });
     }

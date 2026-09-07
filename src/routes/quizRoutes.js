@@ -21,8 +21,8 @@ const quizAuthoringGate = (req, res, next) => {
   return requirePermission('can_grade_exams')(req, res, next);
 };
 
-authoringRouter.get('/:instructorId/courses/:courseId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, getCourseQuizForEditing);
-authoringRouter.post('/:instructorId/courses/:courseId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, createCourseQuiz);
+authoringRouter.get('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, getCourseQuizForEditing);
+authoringRouter.post('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, createCourseQuiz);
 
 router.get('/:id/eligibility', protect, tenantScope, authorize('student'), checkMonthlyExamEligibility);
 router.get('/submissions/:submissionId', protect, tenantScope, getSubmission); // ownership checked inside

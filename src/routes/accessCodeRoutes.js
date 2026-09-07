@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { generateAccessCodes, redeemAccessCode } = require('../controllers/accessCodeController');
+const { generateAccessCodes, listAccessCodeBatches, redeemAccessCode } = require('../controllers/accessCodeController');
 
 const gateGenerate = (req, res, next) => {
   if (req.user.role === 'admin') return next();
@@ -17,6 +17,8 @@ router.post(
   gateGenerate,
   generateAccessCodes
 );
+
+router.get('/instructors/:instructorId/access-code-batches', protect, tenantScope, authorize('admin', 'assistant'), listAccessCodeBatches);
 
 router.post('/access-codes/redeem', protect, tenantScope, authorize('student'), redeemAccessCode);
 

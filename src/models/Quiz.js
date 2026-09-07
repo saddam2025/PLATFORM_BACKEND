@@ -30,6 +30,7 @@ const quizSchema = new mongoose.Schema(
     // instead — so courseId stays null and type/instructorId/stage/month
     // are used to look the quiz up instead.
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null },
+    lectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture', default: null },
     type: { type: String, enum: ['lecture', 'monthly_exam'], default: 'lecture' },
     instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     stage: {

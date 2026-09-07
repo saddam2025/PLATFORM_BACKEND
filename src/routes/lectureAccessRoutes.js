@@ -3,13 +3,17 @@ const router = express.Router();
 const { protect, authorize } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
 const {
-  startView,
-  updateWatchProgress,
-  getWatchProgress
+  startLectureView,
+  updateLectureWatchProgress,
+  getLectureWatchProgress,
+  streamLectureVideo,
+  listEnrolledCourses
 } = require('../controllers/lectureAccessController');
 
-router.post('/:courseId/start-view', protect, tenantScope, authorize('student'), startView);
-router.patch('/:courseId/watch-progress', protect, tenantScope, authorize('student'), updateWatchProgress);
-router.get('/:courseId/watch-progress', protect, tenantScope, authorize('student'), getWatchProgress);
+router.get('/enrolled', protect, tenantScope, authorize('student'), listEnrolledCourses);
+router.post('/:courseId/lectures/:lectureId/start-view', protect, tenantScope, authorize('student'), startLectureView);
+router.patch('/:courseId/lectures/:lectureId/watch-progress', protect, tenantScope, authorize('student'), updateLectureWatchProgress);
+router.get('/:courseId/lectures/:lectureId/watch-progress', protect, tenantScope, authorize('student'), getLectureWatchProgress);
+router.get('/:courseId/lectures/:lectureId/video', streamLectureVideo);
 
 module.exports = router;

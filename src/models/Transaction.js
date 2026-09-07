@@ -8,6 +8,10 @@ const transactionSchema = new mongoose.Schema(
     source: { type: String, enum: ['paymob', 'scratchcard', 'access_code', 'wallet', 'free'], required: true },
     amount: { type: Number, required: true },
     relatedCourseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null },
+    // Present only when the purchase unlocks one lecture rather than its
+    // complete parent course. Keeping both ids makes reporting and webhook
+    // reconciliation unambiguous.
+    relatedLectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture', default: null },
     paymobTxId: { type: String, default: null },
     status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' }
   },

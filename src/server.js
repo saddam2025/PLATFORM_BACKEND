@@ -45,6 +45,10 @@ app.use(cookieParser());
 // This route contains the avatar, thumbnail, and other explicit upload files
 // and never exposes the project root.
 app.use('/uploads', (req, res, next) => {
+  // Course and lecture videos are never public static assets. They are served
+  // through the lecture access controller, which verifies entitlement for
+  // every content/range request.
+  if (req.path.startsWith('/videos/')) return res.status(404).end();
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 }, express.static(path.join(__dirname, 'uploads')));
@@ -71,6 +75,7 @@ app.use('/api/v1/auth', authLimiter);
 
 // ROUTES MOUNTED HERE
 app.use('/api/v1/instructors', require('./routes/courseRoutes'));
+app.use('/api/v1', require('./routes/lectureRoutes'));
 const { quizRoutes, quizAuthoringRoutes } = require('./routes/quizRoutes');
 app.use('/api/v1/quizzes', quizRoutes);
 app.use('/api/v1/instructors', quizAuthoringRoutes);

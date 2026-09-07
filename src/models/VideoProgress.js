@@ -13,6 +13,8 @@ const videoProgressSchema = new mongoose.Schema(
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', required: true },
+    // Legacy rows use courseId; all new player rows use lectureId as well.
+    lectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture', default: null },
     watchedSeconds: { type: Number, default: 0 }, // furthest position ever reached
     totalDurationSeconds: { type: Number, default: 0 },
     watchPercentage: { type: Number, default: 0 },
@@ -26,6 +28,8 @@ const videoProgressSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-videoProgressSchema.index({ studentId: 1, courseId: 1 }, { unique: true });
+// Do not make courseId unique: a student has one progress record per lecture.
+videoProgressSchema.index({ tenantId: 1, studentId: 1, courseId: 1 });
+videoProgressSchema.index({ tenantId: 1, studentId: 1, lectureId: 1 }, { unique: true, partialFilterExpression: { lectureId: { $type: 'objectId' } } });
 
 module.exports = mongoose.model('VideoProgress', videoProgressSchema);

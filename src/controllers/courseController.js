@@ -2,9 +2,11 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Course = require('../models/Course');
 const Category = require('../models/Category');
-const Quiz = require('../models/Quiz');
 const User = require('../models/User');
 const LectureProgress = require('../models/LectureProgress');
+const LectureAccess = require('../models/LectureAccess');
+const CourseEnrollment = require('../models/CourseEnrollment');
+const Lecture = require('../models/Lecture');
 const createNotificationsForAudience = require('../utils/createNotification'); // NEW import for this batch
 
 async function getOptionalUser(req) {
@@ -38,18 +40,6 @@ function isOwnerOfInstructor(user, instructorId) {
   if (user.role === 'admin') return String(user._id) === String(instructorId);
   if (user.role === 'assistant') return String(user.instructorId) === String(instructorId);
   return false;
-}
-
-function externalAssetUrl(value, fieldLabel) {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string' || !value.trim()) throw Object.assign(new Error(`${fieldLabel} غير صالح`), { statusCode: 400 });
-  try {
-    const parsed = new URL(value.trim());
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol');
-    return parsed.toString();
-  } catch {
-    throw Object.assign(new Error(`${fieldLabel} يجب أن يكون رابط HTTP أو HTTPS صحيحاً`), { statusCode: 400 });
-  }
 }
 
 exports.createCourse = async (req, res, next) => {
@@ -100,12 +90,10 @@ exports.createCourse = async (req, res, next) => {
     const thumbnailUrl = req.files?.thumbnail?.[0]
       ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}`
       : null;
-    const videoUrl = req.files?.video?.[0]
-      ? `/uploads/videos/${req.files.video[0].filename}`
-      : externalAssetUrl(externalVideoUrl, 'رابط الفيديو الخارجي') || null;
-    const homeworkUrl = req.files?.homework?.[0]
-      ? `/uploads/homework/${req.files.homework[0].filename}`
-      : externalAssetUrl(externalHomeworkUrl, 'رابط مرفق الواجب الخارجي') || null;
+    // A Course is a container, never a watchable lecture. New course-level
+    // video/homework inputs are deliberately ignored; those belong to Lecture.
+    const videoUrl = null;
+    const homeworkUrl = null;
 
     const isPublishedBool = isPublished === 'true' || isPublished === true;
 
@@ -128,17 +116,8 @@ exports.createCourse = async (req, res, next) => {
       maxViews: Number(maxViews) || 10
     });
 
-    if (questions.length > 0) {
-      const quiz = await Quiz.create({
-        tenantId: req.user.tenantId,
-        courseId: course._id,
-        instructorId,
-        type: 'lecture',
-        questions
-      });
-      course.quizId = quiz._id;
-      await course.save();
-    }
+    // Course-level quiz data is legacy and intentionally not created. Quiz
+    // IDs are attached to individual Lecture records instead.
 
     // CROSS-BATCH WIRE-UP (added in this batch): feature #13 requires both
     // students AND parents to receive an in-platform notification whenever
@@ -183,8 +162,28 @@ exports.listCourses = async (req, res, next) => {
       filter.categoryId = categoryDoc ? categoryDoc._id : null;
     }
 
-    const courses = await Course.find(filter).sort({ order: 1 }).populate('categoryId', 'name');
-    res.json({ data: courses });
+    let courses = await Course.find(filter).sort({ order: 1 }).populate('categoryId', 'name');
+    const lectures = await Lecture.find({ courseId: { $in: courses.map((course) => course._id) }, isPublished: true, tenantId: instructor.tenantId }).select('_id courseId').lean();
+    const lectureCountByCourse = new Map();
+    for (const lecture of lectures) lectureCountByCourse.set(String(lecture.courseId), (lectureCountByCourse.get(String(lecture.courseId)) || 0) + 1);
+
+    if (requester?.role === 'student') {
+      const now = new Date();
+      const [enrollments, accessRows] = await Promise.all([
+        CourseEnrollment.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean(),
+        LectureAccess.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean()
+      ]);
+      const ownedCourses = new Set(enrollments.map((row) => String(row.courseId)));
+      const accessIds = new Set(accessRows.map((row) => String(row.courseId)));
+      for (const course of courses) {
+        const courseId = String(course._id);
+        if (accessIds.has(courseId)) { ownedCourses.add(courseId); continue; } // old-style full-course access
+        const courseLectures = lectures.filter((lecture) => String(lecture.courseId) === courseId);
+        if (courseLectures.length && courseLectures.every((lecture) => accessIds.has(String(lecture._id)))) ownedCourses.add(courseId);
+      }
+      courses = courses.filter((course) => !ownedCourses.has(String(course._id)));
+    }
+    res.json({ data: courses.map((course) => ({ ...course.toObject(), lectureCount: lectureCountByCourse.get(String(course._id)) || 0 })) });
   } catch (err) {
     next(err);
   }
@@ -210,31 +209,6 @@ exports.getCourse = async (req, res, next) => {
     }
 
     const responseData = course.toObject();
-
-    if (requester && requester.role === 'student') {
-      const precedingCourse = await Course.findOne({
-        // `:instructorId` may be a public tenant subdomain (for example,
-        // "sohag"), which cannot be cast to Course.instructorId's ObjectId.
-        // Use the owner ID already resolved above for both URL forms.
-        instructorId: resolvedInstructorId,
-        stage: course.stage,
-        categoryId: course.categoryId,
-        order: { $lt: course.order },
-        tenantId: course.tenantId
-      }).sort({ order: -1 });
-
-      if (!precedingCourse) {
-        responseData.locked = false;
-      } else {
-        const progress = await LectureProgress.findOne({
-          studentId: requester._id,
-          courseId: precedingCourse._id,
-          tenantId: course.tenantId
-        });
-        const unlocked = !!(progress && progress.homeworkCompleted && progress.quizPassed);
-        responseData.locked = !unlocked;
-      }
-    }
 
     res.json({ data: responseData });
   } catch (err) {
@@ -297,16 +271,8 @@ exports.updateCourse = async (req, res, next) => {
     if (req.files?.thumbnail?.[0]) {
       course.thumbnailUrl = `/uploads/thumbnails/${req.files.thumbnail[0].filename}`;
     }
-    if (req.files?.video?.[0]) {
-      course.videoUrl = `/uploads/videos/${req.files.video[0].filename}`;
-    } else if (req.body.externalVideoUrl !== undefined) {
-      course.videoUrl = externalAssetUrl(req.body.externalVideoUrl, 'رابط الفيديو الخارجي');
-    }
-    if (req.files?.homework?.[0]) {
-      course.homeworkUrl = `/uploads/homework/${req.files.homework[0].filename}`;
-    } else if (req.body.externalHomeworkUrl !== undefined) {
-      course.homeworkUrl = externalAssetUrl(req.body.externalHomeworkUrl, 'رابط مرفق الواجب الخارجي');
-    }
+    // A Course is metadata only. Video, homework, and quizzes are stored on
+    // individual Lecture documents and are never updated through this route.
 
     await course.save();
 
@@ -343,10 +309,6 @@ exports.deleteCourse = async (req, res, next) => {
     const course = await Course.findOneAndDelete({ _id: courseId, instructorId, ...req.tenantFilter });
     if (!course) {
       return res.status(404).json({ message: 'الدورة غير موجودة' });
-    }
-
-    if (course.quizId) {
-      await Quiz.deleteOne({ _id: course.quizId, ...req.tenantFilter });
     }
 
     res.json({ message: 'تم حذف الدورة بنجاح' });

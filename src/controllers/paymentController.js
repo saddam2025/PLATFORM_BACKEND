@@ -4,39 +4,59 @@ const Course = require('../models/Course');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const LectureAccess = require('../models/LectureAccess');
+const Lecture = require('../models/Lecture');
+const LectureProgress = require('../models/LectureProgress');
+const { grantCourseEnrollment, grantLectureAccess } = require('../utils/grantLearningAccess');
 const Subscription = require('../models/Subscription');
 
 const PAYMOB_BASE_URL = 'https://accept.paymob.com/api';
 
-async function grantCourseAccess({ course, studentId, tenantId }) {
-  const purchasedAt = new Date();
-  const expiresAt = new Date(purchasedAt);
-  expiresAt.setDate(expiresAt.getDate() + course.accessPeriodDays);
-  const access = await LectureAccess.findOneAndUpdate(
-    { studentId, courseId: course._id, tenantId },
-    {
-      $setOnInsert: {
-        tenantId,
-        purchasedAt,
-        expiresAt,
-        maxViews: course.maxViews,
-        viewsUsed: 0
-      }
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-  return access;
+async function grantCourseAccess({ course, studentId, tenantId, source }) {
+  return grantCourseEnrollment({ course, studentId, tenantId, source });
 }
 
+async function findLectureForCheckout(req) {
+  const lecture = await Lecture.findOne({ _id: req.params.lectureId, courseId: req.params.courseId, ...req.tenantFilter });
+  if (!lecture || !lecture.isPublished) { const error = new Error('المحاضرة غير متاحة'); error.statusCode = 404; throw error; }
+  return lecture;
+}
+
+async function assertNoIncompletePaidLecture(req) {
+  const accesses = await LectureAccess.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: new Date() } }).lean();
+  const lectureIds = accesses.map((row) => row.courseId);
+  if (!lectureIds.length) return;
+  const lectures = await Lecture.find({ _id: { $in: lectureIds }, price: { $gt: 0 }, ...req.tenantFilter }).select('_id videoUrl homeworkUrl quizId').lean();
+  if (!lectures.length) return;
+  const progress = await LectureProgress.find({ studentId: req.user._id, lectureId: { $in: lectures.map((lecture) => lecture._id) }, ...req.tenantFilter }).lean();
+  const incomplete = lectures.find((lecture) => {
+    const row = progress.find((item) => String(item.lectureId) === String(lecture._id));
+    return (lecture.videoUrl && !row?.videoCompleted) || (lecture.homeworkUrl && !row?.homeworkCompleted) || (lecture.quizId && !row?.quizPassed);
+  });
+  if (incomplete) throw Object.assign(new Error('أكمل متطلبات المحاضرة التي اشتريتها أولاً قبل شراء محاضرة مدفوعة أخرى'), { statusCode: 403 });
+}
+
+exports.checkoutLectureFree = async (req, res, next) => {
+  try { const lecture = await findLectureForCheckout(req); if (Number(lecture.price) !== 0) return res.status(400).json({ message: 'هذه المحاضرة ليست مجانية' }); const access = await grantLectureAccess({ lecture, studentId: req.user._id, tenantId: req.user.tenantId }); res.status(201).json({ data: { access, lectureId: lecture._id } }); } catch (err) { next(err); }
+};
+
+exports.checkoutLectureWithWallet = async (req, res, next) => {
+  try {
+    const lecture = await findLectureForCheckout(req);
+    if (Number(lecture.price) === 0) return res.status(400).json({ message: 'هذه المحاضرة مجانية' });
+    await assertNoIncompletePaidLecture(req);
+    const student = await User.findOne({ _id: req.user._id, ...req.tenantFilter });
+    if (!student || Number(student.walletBalance || 0) < Number(lecture.price)) return res.status(400).json({ message: 'رصيد المحفظة غير كافٍ' });
+    const access = await grantLectureAccess({ lecture, studentId: req.user._id, tenantId: req.user.tenantId });
+    student.walletBalance -= Number(lecture.price); await student.save();
+    await Transaction.create({ tenantId: req.user.tenantId, userId: req.user._id, type: 'purchase', source: 'wallet', amount: lecture.price, relatedCourseId: lecture.courseId, relatedLectureId: lecture._id, status: 'success' });
+    res.status(201).json({ data: { access, lectureId: lecture._id, walletBalance: student.walletBalance } });
+  } catch (err) { next(err); }
+};
+
 async function findCourseForCheckout(req) {
-  const course = await Course.findOne({ _id: req.params.courseId, ...req.tenantFilter });
+  const course = await Course.findOne({ _id: req.params.courseId, isPublished: true, ...req.tenantFilter });
   if (!course) {
     const error = new Error('المحاضرة غير موجودة');
-    error.statusCode = 404;
-    throw error;
-  }
-  if (!course.isPublished) {
-    const error = new Error('هذه الدورة غير متاحة للاشتراك');
     error.statusCode = 404;
     throw error;
   }
@@ -51,7 +71,7 @@ exports.checkoutFreeCourse = async (req, res, next) => {
     const course = await findCourseForCheckout(req);
     if (Number(course.price) !== 0) return res.status(400).json({ message: 'هذه الدورة ليست مجانية' });
 
-    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId });
+    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId, source: 'free' });
     await Transaction.findOneAndUpdate(
       { tenantId: req.user.tenantId, userId: req.user._id, relatedCourseId: course._id, source: 'free' },
       { $setOnInsert: { type: 'purchase', amount: 0, status: 'success' } },
@@ -79,7 +99,7 @@ exports.checkoutCourseWithWallet = async (req, res, next) => {
 
     student.walletBalance -= Number(course.price);
     await student.save();
-    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId });
+    const access = await grantCourseAccess({ course, studentId: req.user._id, tenantId: req.user.tenantId, source: 'wallet' });
     await Transaction.create({
       tenantId: req.user.tenantId,
       userId: req.user._id,
@@ -97,11 +117,10 @@ exports.checkoutCourseWithWallet = async (req, res, next) => {
 
 // POST /api/v1/courses/:courseId/checkout/paymob
 // protect + authorize('student').
-exports.startCourseCheckout = async (req, res, next) => {
+async function startPaymobCheckout(req, res, next, item) {
   try {
-    const { courseId } = req.params;
-
-    const course = await findCourseForCheckout(req);
+    const course = item.course;
+    const lecture = item.lecture || null;
 
     // paymobApiKey/paymobWebhookSecret are select:false by default (see B7
     // User.js edit) — explicit .select() needed here since this is exactly
@@ -120,8 +139,9 @@ exports.startCourseCheckout = async (req, res, next) => {
       userId: req.user._id,
       type: 'purchase',
       source: 'paymob',
-      amount: course.price,
+      amount: item.price,
       relatedCourseId: course._id,
+      relatedLectureId: lecture?._id || null,
       status: 'pending'
     });
 
@@ -135,7 +155,7 @@ exports.startCourseCheckout = async (req, res, next) => {
     const orderRes = await axios.post(`${PAYMOB_BASE_URL}/ecommerce/orders`, {
       auth_token: authToken,
       delivery_needed: false,
-      amount_cents: Math.round(course.price * 100),
+      amount_cents: Math.round(item.price * 100),
       currency: 'EGP',
       // merchant_order_id carries our own transaction id through Paymob's
       // system so the webhook can match it back to this Transaction.
@@ -147,7 +167,7 @@ exports.startCourseCheckout = async (req, res, next) => {
     // Step 3: payment key
     const paymentKeyRes = await axios.post(`${PAYMOB_BASE_URL}/acceptance/payment_keys`, {
       auth_token: authToken,
-      amount_cents: Math.round(course.price * 100),
+      amount_cents: Math.round(item.price * 100),
       expiration: 3600,
       order_id: orderId,
       billing_data: {
@@ -178,6 +198,24 @@ exports.startCourseCheckout = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+}
+
+exports.startCourseCheckout = async (req, res, next) => {
+  try {
+    const course = await findCourseForCheckout(req);
+    if (Number(course.price) <= 0) return res.status(400).json({ message: 'هذه الدورة مجانية' });
+    return startPaymobCheckout(req, res, next, { course, price: Number(course.price) });
+  } catch (err) { return next(err); }
+};
+
+exports.startLectureCheckout = async (req, res, next) => {
+  try {
+    const lecture = await findLectureForCheckout(req);
+    if (Number(lecture.price) <= 0) return res.status(400).json({ message: 'هذه المحاضرة مجانية' });
+    await assertNoIncompletePaidLecture(req);
+    const course = await findCourseForCheckout(req);
+    return startPaymobCheckout(req, res, next, { course, lecture, price: Number(lecture.price) });
+  } catch (err) { return next(err); }
 };
 
 // POST /api/v1/webhooks/paymob
@@ -297,28 +335,13 @@ exports.handlePaymobWebhook = async (req, res, next) => {
     transaction.paymobTxId = String(obj.id || '');
     await transaction.save();
 
-    if (transaction.type === 'purchase' && transaction.relatedCourseId) {
+    if (transaction.type === 'purchase' && transaction.relatedLectureId) {
+      const lecture = await Lecture.findOne({ _id: transaction.relatedLectureId, courseId: transaction.relatedCourseId, tenantId: transaction.tenantId });
+      if (lecture) await grantLectureAccess({ lecture, studentId: transaction.userId, tenantId: transaction.tenantId });
+    } else if (transaction.type === 'purchase' && transaction.relatedCourseId) {
       const course = await Course.findOne({ _id: transaction.relatedCourseId, tenantId: transaction.tenantId });
       if (course) {
-        const purchasedAt = new Date();
-        const expiresAt = new Date(purchasedAt);
-        expiresAt.setDate(expiresAt.getDate() + course.accessPeriodDays);
-
-        // Same LectureAccess creation as the access-code redemption path —
-        // this closes the B5 dependency via the Paymob path too.
-        await LectureAccess.findOneAndUpdate(
-          { studentId: transaction.userId, courseId: course._id, tenantId: transaction.tenantId },
-          {
-            $setOnInsert: {
-              tenantId: transaction.tenantId,
-              purchasedAt,
-              expiresAt,
-              maxViews: course.maxViews,
-              viewsUsed: 0
-            }
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
+        await grantCourseEnrollment({ course, studentId: transaction.userId, tenantId: transaction.tenantId, source: 'paymob' });
       }
     } else if (transaction.type === 'topup') {
       await User.updateOne({ _id: transaction.userId, tenantId: transaction.tenantId }, { $inc: { walletBalance: transaction.amount } });

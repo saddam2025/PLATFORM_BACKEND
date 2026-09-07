@@ -24,7 +24,7 @@ async function getParentChild(req) {
 
 async function getCourseMap(courseIds, tenantFilter) {
   if (!courseIds.length) return new Map();
-  const courses = await Course.find({ _id: { $in: courseIds }, ...tenantFilter })
+  const courses = await Course.find({ _id: { $in: courseIds }, isPublished: true, ...tenantFilter })
     .select('title_ar title_en stage')
     .lean();
   return new Map(courses.map((course) => [String(course._id), course]));
