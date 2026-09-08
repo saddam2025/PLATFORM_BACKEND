@@ -47,7 +47,7 @@ async function removeAvatarFile(avatarUrl) {
 // POST /api/v1/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, instructorId, parentAccessCode, stage, track } = req.body;
+    const { name, email, password, role, instructorId, parentAccessCode, stage, track, phone, fatherPhone, motherPhone } = req.body;
 
     if (!['student', 'parent'].includes(role)) {
       return res.status(400).json({ message: 'نوع الحساب غير مسموح به عبر التسجيل الذاتي' });
@@ -69,6 +69,9 @@ exports.register = async (req, res, next) => {
       }
       if (!TRACK_STAGE_IDS.has(stage) && track != null && track !== '') {
         return res.status(400).json({ message: 'الشعبة غير متاحة لهذه المرحلة' });
+      }
+      if (!phone || !String(phone).trim() || !fatherPhone || !String(fatherPhone).trim() || !motherPhone || !String(motherPhone).trim()) {
+        return res.status(400).json({ message: 'أرقام هاتف الطالب والأب والأم مطلوبة' });
       }
     }
 
@@ -121,7 +124,10 @@ exports.register = async (req, res, next) => {
       // NEW: only set for students — schema default (null) applies for
       // parents, matching the field's required-only-for-student validator.
       stage: role === 'student' ? stage : null,
-      track: role === 'student' && TRACK_STAGE_IDS.has(stage) ? track : null
+      track: role === 'student' && TRACK_STAGE_IDS.has(stage) ? track : null,
+      phone: role === 'student' ? String(phone).trim() : '',
+      fatherPhone: role === 'student' ? String(fatherPhone).trim() : '',
+      motherPhone: role === 'student' ? String(motherPhone).trim() : ''
     });
 
     await user.save();

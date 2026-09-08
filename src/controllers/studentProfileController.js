@@ -4,6 +4,116 @@ const VideoProgress = require('../models/VideoProgress');
 const Assignment = require('../models/Assignment');
 const Quiz = require('../models/Quiz');
 const Course = require('../models/Course');
+const Lecture = require('../models/Lecture');
+const LectureAccess = require('../models/LectureAccess');
+const CourseEnrollment = require('../models/CourseEnrollment');
+const mongoose = require('mongoose');
+
+function canViewInstructorStudents(user, instructorId) {
+  if (user.role === 'admin') return String(user._id) === String(instructorId);
+  if (user.role === 'assistant') return String(user.instructorId) === String(instructorId);
+  return false;
+}
+
+function paginationFromQuery(query) {
+  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(query.limit, 10) || 20));
+  return { page, limit };
+}
+
+// GET /api/v1/instructors/:instructorId/students?page=&limit=&search=
+exports.listInstructorStudents = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    if (!canViewInstructorStudents(req.user, instructorId)) return res.status(403).json({ message: 'غير مصرح لك بعرض طلاب هذا الحساب' });
+
+    const { page, limit } = paginationFromQuery(req.query);
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+    const filter = { instructorId, role: 'student', ...req.tenantFilter };
+    if (search) filter.name = { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+
+    const [students, total] = await Promise.all([
+      User.find(filter).select('name email phone fatherPhone motherPhone stage track avatarUrl createdAt').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+      User.countDocuments(filter)
+    ]);
+    return res.json({ data: students, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/instructors/:instructorId/students/:studentId
+exports.getStudentDirectoryDetail = async (req, res, next) => {
+  try {
+    const { instructorId, studentId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId) || !mongoose.isValidObjectId(studentId)) return res.status(400).json({ message: 'معرف الطالب أو المدرس غير صالح' });
+    if (!canViewInstructorStudents(req.user, instructorId)) return res.status(403).json({ message: 'غير مصرح لك بعرض بيانات هذا الطالب' });
+
+    // No sensitive fields are selected. The response is deliberately built
+    // from an allowlist rather than serializing the full User document.
+    const student = await User.findOne({ _id: studentId, instructorId, role: 'student', ...req.tenantFilter })
+      .select('name email phone fatherPhone motherPhone stage track avatarUrl createdAt');
+    if (!student) return res.status(404).json({ message: 'الطالب غير موجود' });
+
+    const [lectureAccess, enrollments] = await Promise.all([
+      LectureAccess.find({ studentId: student._id, ...req.tenantFilter }).sort({ purchasedAt: -1 }).lean(),
+      CourseEnrollment.find({ studentId: student._id, ...req.tenantFilter })
+        .populate({ path: 'courseId', match: req.tenantFilter, select: 'title_ar title_en' })
+        .sort({ purchasedAt: -1 })
+        .lean()
+    ]);
+
+    // Legacy LectureAccess rows may store either a course id (full access)
+    // or a lecture id (single-lecture access); resolve both without guessing.
+    const accessIds = lectureAccess.map((item) => item.courseId).filter(Boolean);
+    const [lectures, courses] = await Promise.all([
+      accessIds.length ? Lecture.find({ _id: { $in: accessIds }, ...req.tenantFilter }).select('title_ar title_en courseId').lean() : [],
+      accessIds.length ? Course.find({ _id: { $in: accessIds }, ...req.tenantFilter }).select('title_ar title_en').lean() : []
+    ]);
+    const lectureById = new Map(lectures.map((item) => [String(item._id), item]));
+    const courseById = new Map(courses.map((item) => [String(item._id), item]));
+
+    return res.json({
+      data: {
+        student: {
+          id: student._id,
+          name: student.name,
+          email: student.email,
+          phone: student.phone,
+          fatherPhone: student.fatherPhone,
+          motherPhone: student.motherPhone,
+          stage: student.stage,
+          track: student.track,
+          avatarUrl: student.avatarUrl || null,
+          registeredAt: student.createdAt
+        },
+        lectureAccess: lectureAccess.map((item) => {
+          const lecture = lectureById.get(String(item.courseId));
+          const course = courseById.get(String(item.courseId));
+          return {
+            id: item._id,
+            lectureTitle: lecture?.title_ar || lecture?.title_en || null,
+            courseTitle: course?.title_ar || course?.title_en || null,
+            purchasedAt: item.purchasedAt,
+            expiresAt: item.expiresAt,
+            viewsUsed: item.viewsUsed,
+            maxViews: item.maxViews
+          };
+        }),
+        courseEnrollments: enrollments.filter((item) => item.courseId).map((item) => ({
+          id: item._id,
+          courseTitle: item.courseId.title_ar || item.courseId.title_en || null,
+          purchasedAt: item.purchasedAt,
+          expiresAt: item.expiresAt,
+          source: item.source
+        }))
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
 // GET /api/v1/instructors/:instructorId/students/:studentId/profile
 // protect + authorize('admin','assistant') at route level.

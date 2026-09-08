@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const { getLeaderboard } = require('../controllers/leaderboardController');
+const { protect, authorize } = require('../middlewares/authMiddleware');
+const tenantScope = require('../middlewares/tenantScope.middleware');
 
-// Public — no protect() middleware, matching the frontend's auth: null route.
-router.get('/:instructorId/leaderboard', getLeaderboard);
+router.get('/:instructorId/leaderboard', protect, tenantScope, authorize('student', 'parent', 'admin', 'assistant'), getLeaderboard);
 
 module.exports = router;

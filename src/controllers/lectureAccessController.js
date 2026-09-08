@@ -108,15 +108,14 @@ exports.streamLectureVideo = async (req, res, next) => {
 // The dashboard supports both access schemes during the Course -> Lectures
 // transition: legacy per-course LectureAccess rows and new CourseEnrollment
 // rows both establish ownership.
-exports.listEnrolledCourses = async (req, res, next) => {
-  try {
+async function getEnrolledCoursesForStudent({ studentId, tenantFilter }) {
     const now = new Date();
     const courseSelection = 'title_ar title_en description_ar description_en thumbnailUrl stage price';
     const [accessRecords, enrollmentRecords] = await Promise.all([
-      LectureAccess.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
+      LectureAccess.find({ studentId, ...tenantFilter, expiresAt: { $gt: now } })
         .lean()
         .sort({ purchasedAt: -1 }),
-      CourseEnrollment.find({ studentId: req.user._id, ...req.tenantFilter, expiresAt: { $gt: now } })
+      CourseEnrollment.find({ studentId, ...tenantFilter, expiresAt: { $gt: now } })
         .populate({ path: 'courseId', match: { isPublished: true }, select: courseSelection })
         .sort({ purchasedAt: -1 })
     ]);
@@ -126,8 +125,8 @@ exports.listEnrolledCourses = async (req, res, next) => {
     // explicitly; populate() cannot do this because its declared ref is Course.
     const accessIds = accessRecords.map((access) => access.courseId).filter(Boolean);
     const [legacyCourses, individuallyOwnedLectures] = await Promise.all([
-      accessIds.length ? Course.find({ _id: { $in: accessIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean() : [],
-      accessIds.length ? Lecture.find({ _id: { $in: accessIds }, ...req.tenantFilter }).select('_id courseId').lean() : []
+      accessIds.length ? Course.find({ _id: { $in: accessIds }, isPublished: true, ...tenantFilter }).select(courseSelection).lean() : [],
+      accessIds.length ? Lecture.find({ _id: { $in: accessIds }, ...tenantFilter }).select('_id courseId').lean() : []
     ]);
     const legacyCourseById = new Map(legacyCourses.map((course) => [String(course._id), course]));
     const lecturesByCourse = new Map();
@@ -137,7 +136,7 @@ exports.listEnrolledCourses = async (req, res, next) => {
     }
     const partialCourseIds = [...lecturesByCourse.keys()];
     const partialCourses = partialCourseIds.length
-      ? await Course.find({ _id: { $in: partialCourseIds }, isPublished: true, ...req.tenantFilter }).select(courseSelection).lean()
+      ? await Course.find({ _id: { $in: partialCourseIds }, isPublished: true, ...tenantFilter }).select(courseSelection).lean()
       : [];
 
     // A student can have a legacy record and a full enrollment for the same
@@ -183,11 +182,19 @@ exports.listEnrolledCourses = async (req, res, next) => {
       });
     }
     const courseIds = [...coursesById.keys()];
-    const lectureCounts = courseIds.length ? await Lecture.aggregate([{ $match: { courseId: { $in: courseIds.map((id) => new (require('mongoose').Types.ObjectId)(id)) }, isPublished: true, ...req.tenantFilter } }, { $group: { _id: '$courseId', count: { $sum: 1 } } }]) : [];
+    const lectureCounts = courseIds.length ? await Lecture.aggregate([{ $match: { courseId: { $in: courseIds.map((id) => new (require('mongoose').Types.ObjectId)(id)) }, isPublished: true, ...tenantFilter } }, { $group: { _id: '$courseId', count: { $sum: 1 } } }]) : [];
     const countByCourse = new Map(lectureCounts.map((row) => [String(row._id), row.count]));
     for (const [courseId, value] of coursesById) value.course = { ...(value.course.toObject ? value.course.toObject() : value.course), lectureCount: countByCourse.get(courseId) || 0 };
     const courses = [...coursesById.values()]
       .sort((left, right) => new Date(right.purchasedAt) - new Date(left.purchasedAt));
+    return courses;
+}
+
+exports.getEnrolledCoursesForStudent = getEnrolledCoursesForStudent;
+
+exports.listEnrolledCourses = async (req, res, next) => {
+  try {
+    const courses = await getEnrolledCoursesForStudent({ studentId: req.user._id, tenantFilter: req.tenantFilter });
     res.json({ data: courses });
   } catch (err) {
     next(err);

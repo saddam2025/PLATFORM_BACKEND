@@ -514,20 +514,19 @@ exports.checkMonthlyExamEligibility = async (req, res, next) => {
 
 // GET /api/v1/quizzes/me/exam-grades
 // Returns only the authenticated student's submissions in the active tenant.
-exports.listMyExamGrades = async (req, res, next) => {
-  try {
+async function getExamGradesForStudent({ studentId, tenantFilter }) {
     const submissions = await QuizSubmission.find({
-      studentId: req.user._id,
-      ...req.tenantFilter
+      studentId,
+      ...tenantFilter
     }).sort({ submittedAt: -1 }).lean();
 
     const quizIds = [...new Set(submissions.map((item) => String(item.quizId)))];
-    const quizzes = quizIds.length ? await Quiz.find({ _id: { $in: quizIds }, ...req.tenantFilter }).select('title lectureId courseId type').lean() : [];
+    const quizzes = quizIds.length ? await Quiz.find({ _id: { $in: quizIds }, ...tenantFilter }).select('title lectureId courseId type').lean() : [];
     const quizById = new Map(quizzes.map((item) => [String(item._id), item]));
 
     const lectureIds = [...new Set(quizzes.filter((item) => item.lectureId).map((item) => String(item.lectureId)))];
-    const lecturesByQuiz = quizIds.length ? await Lecture.find({ quizId: { $in: quizIds }, ...req.tenantFilter }).select('quizId courseId title_ar title_en').lean() : [];
-    const lecturesById = lectureIds.length ? await Lecture.find({ _id: { $in: lectureIds }, ...req.tenantFilter }).select('_id courseId title_ar title_en').lean() : [];
+    const lecturesByQuiz = quizIds.length ? await Lecture.find({ quizId: { $in: quizIds }, ...tenantFilter }).select('quizId courseId title_ar title_en').lean() : [];
+    const lecturesById = lectureIds.length ? await Lecture.find({ _id: { $in: lectureIds }, ...tenantFilter }).select('_id courseId title_ar title_en').lean() : [];
     const lectureByQuizId = new Map(lecturesByQuiz.map((item) => [String(item.quizId), item]));
     const lectureById = new Map(lecturesById.map((item) => [String(item._id), item]));
 
@@ -535,7 +534,7 @@ exports.listMyExamGrades = async (req, res, next) => {
       const lecture = lectureById.get(String(quiz.lectureId)) || lectureByQuizId.get(String(quiz._id));
       return lecture?.courseId || quiz.courseId;
     }).filter(Boolean).map(String))];
-    const courses = courseIds.length ? await Course.find({ _id: { $in: courseIds }, ...req.tenantFilter }).select('title_ar title_en').lean() : [];
+    const courses = courseIds.length ? await Course.find({ _id: { $in: courseIds }, ...tenantFilter }).select('title_ar title_en').lean() : [];
     const courseById = new Map(courses.map((item) => [String(item._id), item]));
 
     const data = submissions.map((submission) => {
@@ -553,6 +552,14 @@ exports.listMyExamGrades = async (req, res, next) => {
       };
     });
 
+    return data;
+}
+
+exports.getExamGradesForStudent = getExamGradesForStudent;
+
+exports.listMyExamGrades = async (req, res, next) => {
+  try {
+    const data = await getExamGradesForStudent({ studentId: req.user._id, tenantFilter: req.tenantFilter });
     res.json({ data });
   } catch (err) { next(err); }
 };

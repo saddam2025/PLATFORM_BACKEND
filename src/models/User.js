@@ -17,6 +17,8 @@ const userSchema = new mongoose.Schema(
       index: true
     },
     phone: { type: String, default: '' },
+    fatherPhone: { type: String, default: '' },
+    motherPhone: { type: String, default: '' },
     passwordHash: { type: String, required: true, select: true },
     role: {
       type: String,

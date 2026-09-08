@@ -39,6 +39,12 @@ exports.getLeaderboard = async (req, res, next) => {
     }
     const instructor = await resolveInstructor(instructorId);
     if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
+    // Authenticated viewers can only read their own tenant's board. The
+    // route supplies tenantScope for every allowed role, so an instructor id
+    // from another tenant must not select a different leaderboard.
+    if (req.tenantFilter?.tenantId && String(instructor.tenantId) !== String(req.tenantFilter.tenantId)) {
+      return res.status(404).json({ message: 'المدرس غير موجود' });
+    }
     const instructorObjectId = new mongoose.Types.ObjectId(instructor._id);
     const tenantObjectId = new mongoose.Types.ObjectId(instructor.tenantId);
 

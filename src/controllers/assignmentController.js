@@ -207,9 +207,16 @@ exports.gradeAssignment = async (req, res, next) => {
 };
 
 
+async function getAssignmentGradesForStudent({ studentId, tenantFilter }) {
+  const assignments = await Assignment.find({ studentId, status: { $in: ['graded', 'resubmit'] }, ...tenantFilter }).sort({ gradedAt: -1, updatedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean();
+  return assignments.map((assignment) => ({ _id: assignment._id, grade: assignment.grade, feedback: assignment.feedback, status: assignment.status, lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null, courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null, gradedAt: assignment.gradedAt || assignment.updatedAt }));
+}
+
+exports.getAssignmentGradesForStudent = getAssignmentGradesForStudent;
+
 exports.listMyAssignmentGrades = async (req, res, next) => {
   try {
-    const assignments = await Assignment.find({ studentId: req.user._id, status: { $in: ['graded', 'resubmit'] }, ...getTenantFilter(req) }).sort({ gradedAt: -1, updatedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean();
-    res.json({ data: assignments.map((assignment) => ({ _id: assignment._id, grade: assignment.grade, feedback: assignment.feedback, status: assignment.status, lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null, courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null, gradedAt: assignment.gradedAt || assignment.updatedAt })) });
+    const data = await getAssignmentGradesForStudent({ studentId: req.user._id, tenantFilter: getTenantFilter(req) });
+    res.json({ data });
   } catch (err) { next(err); }
 };

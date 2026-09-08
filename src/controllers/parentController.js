@@ -5,6 +5,9 @@ const Quiz = require('../models/Quiz');
 const QuizSubmission = require('../models/QuizSubmission');
 const Assignment = require('../models/Assignment');
 const LectureProgress = require('../models/LectureProgress');
+const { getEnrolledCoursesForStudent } = require('./lectureAccessController');
+const { getExamGradesForStudent } = require('./quizController');
+const { getAssignmentGradesForStudent } = require('./assignmentController');
 
 const RECENT_ITEMS_LIMIT = 20;
 const ACTIVITY_LIMIT = 30;
@@ -79,6 +82,57 @@ exports.getMyChild = async (req, res, next) => {
         }
       }
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/parents/me/child/courses
+// The child is always resolved from the authenticated parent's childId.
+exports.getMyChildCourses = async (req, res, next) => {
+  try {
+    const child = await getParentChild(req);
+    if (!child) return res.status(404).json({ message: 'لم يتم ربط حساب ولي الأمر بطالب' });
+
+    const enrolled = await getEnrolledCoursesForStudent({ studentId: child._id, tenantFilter: req.tenantFilter });
+    return res.json({
+      data: enrolled.map((item) => ({
+        id: item.course._id,
+        title: item.course.title_ar || item.course.title_en || null,
+        stage: item.course.stage || null,
+        thumbnailUrl: item.course.thumbnailUrl || null,
+        lectureCount: item.course.lectureCount || 0,
+        fullAccess: item.fullAccess,
+        partialLectureCount: item.partialLectureCount || 0,
+        expiresAt: item.expiresAt || null
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/parents/me/child/exam-grades
+exports.getMyChildExamGrades = async (req, res, next) => {
+  try {
+    const child = await getParentChild(req);
+    if (!child) return res.status(404).json({ message: 'لم يتم ربط حساب ولي الأمر بطالب' });
+
+    const data = await getExamGradesForStudent({ studentId: child._id, tenantFilter: req.tenantFilter });
+    return res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/parents/me/child/assignment-grades
+exports.getMyChildAssignmentGrades = async (req, res, next) => {
+  try {
+    const child = await getParentChild(req);
+    if (!child) return res.status(404).json({ message: 'لم يتم ربط حساب ولي الأمر بطالب' });
+
+    const data = await getAssignmentGradesForStudent({ studentId: child._id, tenantFilter: req.tenantFilter });
+    return res.json({ data });
   } catch (err) {
     next(err);
   }
