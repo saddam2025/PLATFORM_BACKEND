@@ -3,11 +3,14 @@ const Tenant = require('../models/Tenant');
 const Course = require('../models/Course');
 const Quiz = require('../models/Quiz');
 const QuizSubmission = require('../models/QuizSubmission');
+const StandaloneExam = require('../models/StandaloneExam');
+const StandaloneExamSubmission = require('../models/StandaloneExamSubmission');
 const Assignment = require('../models/Assignment');
 const LectureProgress = require('../models/LectureProgress');
 const { getEnrolledCoursesForStudent } = require('./lectureAccessController');
 const { getExamGradesForStudent } = require('./quizController');
 const { getAssignmentGradesForStudent } = require('./assignmentController');
+const { settleExpiredStandaloneExamSubmissions } = require('../services/standaloneExamSubmissionService');
 
 const RECENT_ITEMS_LIMIT = 20;
 const ACTIVITY_LIMIT = 30;
@@ -145,8 +148,10 @@ exports.getMyChildReport = async (req, res, next) => {
     if (!child) return res.status(404).json({ message: 'لم يتم ربط حساب ولي الأمر بطالب' });
 
     const childFilter = { studentId: child._id, ...req.tenantFilter };
-    const [quizSubmissions, assignments, progressRecords, totalCourses] = await Promise.all([
+    await settleExpiredStandaloneExamSubmissions({ filter: childFilter });
+    const [quizSubmissions, standaloneExamSubmissions, assignments, progressRecords, totalCourses] = await Promise.all([
       QuizSubmission.find(childFilter).sort({ submittedAt: -1 }).lean(),
+      StandaloneExamSubmission.find(childFilter).sort({ startedAt: -1 }).lean(),
       Assignment.find(childFilter).sort({ submittedAt: -1 }).lean(),
       LectureProgress.find(childFilter).sort({ updatedAt: -1 }).lean(),
       Course.countDocuments({
@@ -162,6 +167,11 @@ exports.getMyChildReport = async (req, res, next) => {
       ? await Quiz.find({ _id: { $in: quizIds }, ...req.tenantFilter }).select('courseId type stage month').lean()
       : [];
     const quizById = new Map(quizzes.map((quiz) => [String(quiz._id), quiz]));
+    const standaloneExamIds = [...new Set(standaloneExamSubmissions.map((item) => String(item.examId)))];
+    const standaloneExams = standaloneExamIds.length
+      ? await StandaloneExam.find({ _id: { $in: standaloneExamIds }, ...req.tenantFilter }).select('title stage durationMinutes thumbnailUrl').lean()
+      : [];
+    const standaloneExamById = new Map(standaloneExams.map((exam) => [String(exam._id), exam]));
     const courseIds = [...new Set([
       ...assignments.map((item) => String(item.courseId)),
       ...progressRecords.map((item) => String(item.courseId)),
@@ -175,14 +185,16 @@ exports.getMyChildReport = async (req, res, next) => {
     };
     const gradedAssignments = assignments.filter((assignment) => typeof assignment.grade === 'number');
     const quizAverage = average(quizSubmissions, 'score');
+    const standaloneExamAverage = average(standaloneExamSubmissions.filter((item) => typeof item.score === 'number'), 'score');
     const assignmentAverage = average(gradedAssignments, 'grade');
-    const gradeValues = [quizAverage, assignmentAverage].filter((value) => typeof value === 'number');
+    const gradeValues = [quizAverage, standaloneExamAverage, assignmentAverage].filter((value) => typeof value === 'number');
 
     return res.json({
       data: {
         child: { id: child._id, name: child.name, avatarUrl: child.avatarUrl || null, stage: child.stage },
         grades: {
           quizAverage,
+          standaloneExamAverage,
           assignmentAverage,
           overallAverage: gradeValues.length ? Number((gradeValues.reduce((sum, value) => sum + value, 0) / gradeValues.length).toFixed(2)) : null
         },
@@ -236,6 +248,20 @@ exports.getMyChildReport = async (req, res, next) => {
               submittedAt: item.submittedAt
             };
           })
+        },
+        standaloneExams: {
+          attempts: standaloneExamSubmissions.length,
+          autoSubmitted: standaloneExamSubmissions.filter((item) => item.autoSubmitted).length,
+          averageScore: standaloneExamAverage,
+          recent: standaloneExamSubmissions.slice(0, RECENT_ITEMS_LIMIT).map((item) => ({
+            id: item._id,
+            examId: item.examId,
+            title: standaloneExamById.get(String(item.examId))?.title || 'امتحان مستقل',
+            score: item.score,
+            startedAt: item.startedAt,
+            submittedAt: item.submittedAt,
+            autoSubmitted: item.autoSubmitted
+          }))
         }
       }
     });

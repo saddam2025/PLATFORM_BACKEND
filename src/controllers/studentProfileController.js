@@ -3,11 +3,14 @@ const QuizSubmission = require('../models/QuizSubmission');
 const VideoProgress = require('../models/VideoProgress');
 const Assignment = require('../models/Assignment');
 const Quiz = require('../models/Quiz');
+const StandaloneExam = require('../models/StandaloneExam');
+const StandaloneExamSubmission = require('../models/StandaloneExamSubmission');
 const Course = require('../models/Course');
 const Lecture = require('../models/Lecture');
 const LectureAccess = require('../models/LectureAccess');
 const CourseEnrollment = require('../models/CourseEnrollment');
 const mongoose = require('mongoose');
+const { settleExpiredStandaloneExamSubmissions } = require('../services/standaloneExamSubmissionService');
 
 function canViewInstructorStudents(user, instructorId) {
   if (user.role === 'admin') return String(user._id) === String(instructorId);
@@ -144,11 +147,20 @@ exports.getStudentProfile = async (req, res, next) => {
 
     // Three independent queries — run in parallel via Promise.all rather
     // than sequential awaits, since none of them depend on each other's result.
-    const [quizSubmissions, videoProgress, assignments] = await Promise.all([
+    const standaloneFilter = { studentId, ...req.tenantFilter };
+    await settleExpiredStandaloneExamSubmissions({ filter: standaloneFilter });
+    const [quizSubmissions, videoProgress, assignments, standaloneExamSubmissions] = await Promise.all([
       QuizSubmission.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean(),
       VideoProgress.find({ studentId, ...req.tenantFilter }).lean(),
-      Assignment.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean()
+      Assignment.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean(),
+      StandaloneExamSubmission.find(standaloneFilter).sort({ startedAt: -1 }).lean()
     ]);
+
+    const standaloneExamIds = [...new Set(standaloneExamSubmissions.map((submission) => String(submission.examId)))];
+    const standaloneExams = standaloneExamIds.length
+      ? await StandaloneExam.find({ _id: { $in: standaloneExamIds }, ...req.tenantFilter }).select('title stage durationMinutes thumbnailUrl').lean()
+      : [];
+    const standaloneExamById = new Map(standaloneExams.map((exam) => [String(exam._id), exam]));
 
     // Populate quiz title / course title onto each submission manually
     // (cheaper than .populate() chains across two different ref paths per
@@ -197,7 +209,11 @@ exports.getStudentProfile = async (req, res, next) => {
         },
         quizSubmissions: enrichedSubmissions,
         videoProgress: enrichedProgress,
-        assignments
+        assignments,
+        standaloneExamSubmissions: standaloneExamSubmissions.map((submission) => ({
+          ...submission,
+          exam: standaloneExamById.get(String(submission.examId)) || null
+        }))
       }
     });
   } catch (err) {

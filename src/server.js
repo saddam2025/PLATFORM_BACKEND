@@ -92,6 +92,7 @@ app.use('/api/v1', require('./routes/scratchCardRoutes'));
 app.use('/api/v1', require('./routes/accessCodeRoutes'));
 app.use('/api/v1', require('./routes/paymentRoutes'));
 app.use('/api/v1', require('./routes/assignmentRoutes'));
+app.use('/api/v1', require('./routes/standaloneExamRoutes'));
 // (future prompts will add: app.use('/api/v1/auth', authRoutes); etc.)
 app.use('/api/v1/auth', require('./routes/authRoutes'));
 app.use('/api/v1/instructors', require('./routes/userRoutes'));

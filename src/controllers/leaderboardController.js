@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Tenant = require('../models/Tenant');
 const { STAGE_ENUM } = require('../constants/stages');
+const { settleExpiredStandaloneExamSubmissions } = require('../services/standaloneExamSubmissionService');
 
 async function resolveInstructor(instructorId) {
   if (mongoose.isValidObjectId(instructorId)) {
@@ -48,11 +49,15 @@ exports.getLeaderboard = async (req, res, next) => {
     const instructorObjectId = new mongoose.Types.ObjectId(instructor._id);
     const tenantObjectId = new mongoose.Types.ObjectId(instructor.tenantId);
 
+    // Leaderboard is also a score-read surface, so close abandoned attempts
+    // before aggregation rather than leaving them indefinitely ungraded.
+    await settleExpiredStandaloneExamSubmissions({ filter: { tenantId: tenantObjectId } });
+
     const studentMatch = { instructorId: instructorObjectId, role: 'student', tenantId: tenantObjectId };
     if (stage) studentMatch.stage = stage;
 
-    // Exam averages: join QuizSubmission -> User (student), filtered to this
-    // instructor's students, grouped by student.
+    // Exam averages: join both QuizSubmission and StandaloneExamSubmission
+    // for this instructor's students, then average their combined scores.
     const examAggPromise = mongoose.connection.db
       .collection('users')
       .aggregate([
@@ -69,11 +74,23 @@ exports.getLeaderboard = async (req, res, next) => {
           }
         },
         {
+          $lookup: {
+            from: 'standaloneexamsubmissions',
+            let: { studentId: '$_id' },
+            pipeline: [{ $match: { $expr: { $and: [
+              { $eq: ['$studentId', '$$studentId'] },
+              { $eq: ['$tenantId', tenantObjectId] },
+              { $ne: ['$score', null] }
+            ] } } }],
+            as: 'standaloneExamSubmissions'
+          }
+        },
+        {
           $addFields: {
             examAvg: {
               $cond: [
-                { $gt: [{ $size: '$submissions' }, 0] },
-                { $avg: '$submissions.score' },
+                { $gt: [{ $size: { $concatArrays: ['$submissions', '$standaloneExamSubmissions'] } }, 0] },
+                { $avg: { $concatArrays: ['$submissions.score', '$standaloneExamSubmissions.score'] } },
                 0
               ]
             }
