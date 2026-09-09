@@ -2,7 +2,7 @@ const Tenant = require('../models/Tenant');
 const mongoose = require('mongoose');
 
 const LIST_FIELDS = 'name subdomain logoUrl themeColors.primary themeColors.secondary';
-const DETAIL_FIELDS = `${LIST_FIELDS} tagline bio subject location coverPhotoUrl stagesOffered monthlyPrice perLecturePrice`;
+const DETAIL_FIELDS = `${LIST_FIELDS} tagline bio subject location coverPhotoUrl stagesOffered monthlyPrice perLecturePrice supportPhone`;
 
 function withOwnerImage(tenant) {
   if (!tenant) return null;

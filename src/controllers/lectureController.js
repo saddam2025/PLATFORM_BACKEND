@@ -5,11 +5,23 @@ const LectureProgress = require('../models/LectureProgress');
 const LectureAccess = require('../models/LectureAccess');
 const CourseEnrollment = require('../models/CourseEnrollment');
 const Quiz = require('../models/Quiz');
+const Tenant = require('../models/Tenant');
+const User = require('../models/User');
 const { getLectureAccessState } = require('./lectureAccessController');
 
 function ownsInstructor(user, instructorId) {
   return (user.role === 'admin' && String(user._id) === String(instructorId))
     || (user.role === 'assistant' && String(user.instructorId) === String(instructorId));
+}
+
+async function resolveInstructorTenant(instructorId) {
+  const instructor = mongoose.isValidObjectId(instructorId)
+    ? await User.findOne({ _id: instructorId, role: 'admin' }).select('_id tenantId').lean()
+    : null;
+  if (instructor) return { tenantId: instructor.tenantId, instructorId: instructor._id };
+
+  const tenant = await Tenant.findOne({ subdomain: instructorId, isActive: true, deletedAt: null }).select('_id ownerId').lean();
+  return tenant?.ownerId ? { tenantId: tenant._id, instructorId: tenant.ownerId } : null;
 }
 
 exports.createLecture = async (req, res, next) => {
@@ -100,6 +112,26 @@ exports.deleteLecture = async (req, res, next) => {
     const remaining = await Lecture.find({ courseId: lecture.courseId, instructorId: lecture.instructorId, ...req.tenantFilter }).sort({ order: 1 });
     await Promise.all(remaining.map((item, index) => Lecture.updateOne({ _id: item._id, ...req.tenantFilter }, { $set: { order: index + 1 } })));
     res.json({ data: { id: lecture._id } });
+  } catch (err) { next(err); }
+};
+
+// GET /api/v1/instructors/:instructorId/lectures/featured
+// Public tenant-homepage feed: only published lectures whose parent courses
+// are also published may be returned. The tenant is resolved from the URL,
+// never from a potentially unrelated signed-in user's tenant.
+exports.listFeaturedLectures = async (req, res, next) => {
+  try {
+    const instructor = await resolveInstructorTenant(req.params.instructorId);
+    if (!instructor?.tenantId) return res.status(404).json({ message: 'المدرس غير موجود' });
+
+    const courses = await Course.find({ instructorId: instructor.instructorId, tenantId: instructor.tenantId, isPublished: true }).select('_id title_ar title_en').lean();
+    if (!courses.length) return res.json({ data: [] });
+    const courseTitleById = new Map(courses.map((course) => [String(course._id), course.title_ar || course.title_en]));
+    const lectures = await Lecture.find({ instructorId: instructor.instructorId, tenantId: instructor.tenantId, courseId: { $in: courses.map((course) => course._id) }, isPublished: true })
+      .sort({ updatedAt: -1, _id: -1 })
+      .limit(6)
+      .lean();
+    return res.json({ data: lectures.map((lecture) => ({ ...lecture, courseTitle: courseTitleById.get(String(lecture.courseId)) || '' })) });
   } catch (err) { next(err); }
 };
 

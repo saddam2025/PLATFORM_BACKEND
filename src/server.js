@@ -76,6 +76,7 @@ app.use('/api/v1/auth', authLimiter);
 // ROUTES MOUNTED HERE
 app.use('/api/v1/instructors', require('./routes/courseRoutes'));
 app.use('/api/v1', require('./routes/lectureRoutes'));
+app.use('/api/v1/public', require('./routes/publicContentRoutes'));
 const { quizRoutes, quizAuthoringRoutes } = require('./routes/quizRoutes');
 app.use('/api/v1/quizzes', quizRoutes);
 app.use('/api/v1/instructors', quizAuthoringRoutes);
