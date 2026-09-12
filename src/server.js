@@ -13,6 +13,7 @@ const errorHandler = require('./middlewares/errorHandler');
 connectDB();
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Security headers (OWASP A05 — Security Misconfiguration).
 app.use(helmet());
