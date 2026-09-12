@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { uploadReelVideo } = require('../middlewares/uploadMiddleware');
-const { createReel, listReels, incrementView, deleteReel } = require('../controllers/reelController');
+const { initReelUpload, confirmReelUpload, listReels, incrementView, deleteReel } = require('../controllers/reelController');
 
 const gateVideoUpload = (req, res, next) => {
   if (req.user.role === 'admin') return next();
@@ -11,14 +10,14 @@ const gateVideoUpload = (req, res, next) => {
 };
 
 router.post(
-  '/instructors/:instructorId/reels',
+  '/instructors/:instructorId/reels/upload-init',
   protect,
   tenantScope,
   authorize('admin', 'assistant'),
-  uploadReelVideo,
   gateVideoUpload,
-  createReel
+  initReelUpload
 );
+router.post('/instructors/:instructorId/reels/confirm-upload', protect, tenantScope, authorize('admin', 'assistant'), gateVideoUpload, confirmReelUpload);
 
 router.get('/instructors/:instructorId/reels', protect, tenantScope, authorize('student', 'admin', 'assistant'), listReels);
 router.patch('/reels/:reelId/view', protect, tenantScope, authorize('student'), incrementView);

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { uploadVideo } = require('../middlewares/uploadMiddleware');
+const { uploadGeneral } = require('../middlewares/uploadMiddleware');
 const {
   createCourse,
   listCourses,
@@ -21,11 +21,7 @@ const gateVideoUpload = (req, res, next) => {
   return requirePermission('can_upload_video')(req, res, next);
 };
 
-const uploadFields = uploadVideo.fields([
-  { name: 'video', maxCount: 1 },
-  { name: 'thumbnail', maxCount: 1 },
-  { name: 'homework', maxCount: 1 }
-]);
+const uploadFields = uploadGeneral.fields([{ name: 'thumbnail', maxCount: 1 }]);
 
 router.post(
   '/:instructorId/courses',

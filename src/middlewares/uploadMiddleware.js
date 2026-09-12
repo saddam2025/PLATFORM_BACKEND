@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
-const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', assignment: 'assignments', avatar: 'avatars' };
+const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', avatar: 'avatars' };
 
 // Ensure target directories exist at startup — avoids runtime ENOENT errors
 // on first upload in a fresh environment.
@@ -18,7 +18,6 @@ function destinationForField(fieldname) {
   if (fieldname === 'video') return SUBDIRS.video;
   if (fieldname === 'thumbnail') return SUBDIRS.thumbnail;
   if (fieldname === 'homework') return SUBDIRS.homework;
-  if (fieldname === 'assignment') return SUBDIRS.assignment;
   if (fieldname === 'avatar') return SUBDIRS.avatar;
   return null;
 }
@@ -97,7 +96,9 @@ const uploadGeneral = multer({
 });
 
 const assignmentMulter = multer({
-  storage,
+  // Assignment files go straight into memory and are sent to R2 by the
+  // controller. They are never written to src/uploads first.
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 }
 });

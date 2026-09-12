@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Course = require('../models/Course');
 const Transaction = require('../models/Transaction');
 const createNotificationsForAudience = require('../utils/createNotification');
+const { PASSWORD_POLICY_MESSAGE, hasValidPassword } = require('../utils/passwordPolicy');
 
 const SUBSCRIPTION_STATUSES = ['active', 'suspended', 'trial'];
 const SUBDOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -52,6 +53,9 @@ function getTenantCreationData(body) {
   }
   if (!admin || typeof admin.name !== 'string' || !admin.name.trim() || typeof admin.email !== 'string' || !admin.email.trim() || typeof admin.password !== 'string' || !admin.password) {
     throw createHttpError(400, 'Admin name, email, and password are required');
+  }
+  if (!hasValidPassword(admin.password)) {
+    throw createHttpError(400, PASSWORD_POLICY_MESSAGE);
   }
 
   return {

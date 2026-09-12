@@ -5,8 +5,11 @@ const Course = require('../models/Course');
 const Lecture = require('../models/Lecture');
 const Tenant = require('../models/Tenant');
 const User = require('../models/User');
+const BunnyUpload = require('../models/BunnyUpload');
 const mongoose = require('mongoose');
 const createNotificationsForAudience = require('../utils/createNotification');
+const { createVideoSlot, directTusUpload, getVerifiedUploadedVideo, playbackUrls, DIRECT_UPLOAD_TTL_SECONDS } = require('../utils/bunnyStream');
+const { STAGE_ENUM } = require('../constants/stages');
 
 function isOwnerOfInstructor(user, instructorId) {
   if (!user) return false;
@@ -224,4 +227,66 @@ exports.deleteReel = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+// POST /api/v1/instructors/:instructorId/reels/upload-init
+// Creates only a Bunny slot and a short-lived server-side upload record; the
+// browser uploads directly to Bunny using the scoped TUS signature returned.
+exports.initReelUpload = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    const { caption = '', stage = null, title } = req.body || {};
+    if (!isOwnerOfInstructor(req.user, instructorId)) return res.status(403).json({ message: 'غير مصرح لك برفع ريلز لهذا الحساب' });
+    if (typeof caption !== 'string' || caption.length > 1000 || (stage && !STAGE_ENUM.includes(stage))) return res.status(400).json({ message: 'بيانات الريلز غير صالحة' });
+
+    const { settings, videoId } = await createVideoSlot(title || caption || 'Reel');
+    const pending = await BunnyUpload.create({
+      tenantId: req.user.tenantId,
+      instructorId,
+      uploadedBy: req.user._id,
+      target: 'reel',
+      bunnyVideoId: videoId,
+      caption: caption.trim(),
+      stage: stage || null,
+      expiresAt: new Date(Date.now() + DIRECT_UPLOAD_TTL_SECONDS * 1000)
+    });
+    return res.status(201).json({ data: { uploadId: pending._id, videoId, upload: directTusUpload(videoId, settings) } });
+  } catch (err) { next(err); }
+};
+
+// POST /api/v1/instructors/:instructorId/reels/confirm-upload
+// Never trusts the browser's completion claim: Bunny's authenticated GET is
+// performed before a Reel document is created.
+exports.confirmReelUpload = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    const { uploadId } = req.body || {};
+    if (!mongoose.isValidObjectId(uploadId) || !isOwnerOfInstructor(req.user, instructorId)) return res.status(403).json({ message: 'تأكيد رفع الريلز غير مصرح به' });
+    const pending = await BunnyUpload.findOne({ _id: uploadId, target: 'reel', tenantId: req.user.tenantId, instructorId, uploadedBy: req.user._id });
+    if (!pending || pending.expiresAt <= new Date()) return res.status(404).json({ message: 'طلب رفع الريلز غير موجود أو منتهي' });
+
+    const { video, settings } = await getVerifiedUploadedVideo(pending.bunnyVideoId);
+    const claimed = await BunnyUpload.findOneAndUpdate(
+      { _id: pending._id, expiresAt: { $gt: new Date() }, confirmedAt: null },
+      { $set: { confirmedAt: new Date() } },
+      { new: true }
+    );
+    if (!claimed) {
+      const existing = await Reel.findOne({ bunnyVideoId: pending.bunnyVideoId, ...req.tenantFilter });
+      if (existing) return res.json({ data: existing });
+      return res.status(409).json({ message: 'يجري تأكيد هذا الرفع بالفعل؛ أعد المحاولة بعد لحظات' });
+    }
+    const urls = playbackUrls(pending.bunnyVideoId, settings);
+    try {
+      const reel = await Reel.create({ tenantId: pending.tenantId, instructorId, uploadedBy: req.user._id, caption: pending.caption, stage: pending.stage, bunnyVideoId: video.guid, ...urls });
+      await BunnyUpload.deleteOne({ _id: claimed._id });
+      await createNotificationsForAudience({ tenantId: reel.tenantId, instructorId, type: 'new_reel', title: 'ريلز جديد', body: reel.caption || 'تم نشر مقطع فيديو قصير جديد', relatedId: reel._id, audience: 'both' });
+      return res.status(201).json({ data: reel });
+    } catch (err) {
+      const existing = await Reel.findOne({ bunnyVideoId: pending.bunnyVideoId, ...req.tenantFilter });
+      if (existing) return res.json({ data: existing });
+      await BunnyUpload.updateOne({ _id: claimed._id }, { $set: { confirmedAt: null } });
+      throw err;
+    }
+  } catch (err) { next(err); }
 };

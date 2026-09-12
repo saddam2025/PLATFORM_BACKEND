@@ -73,6 +73,18 @@ const authLimiter = rateLimit({
 });
 app.use('/api/v1/auth', authLimiter);
 
+// A six-digit TOTP is much smaller than a password search space. This stricter
+// per-IP cap complements the general auth limiter; it is role-neutral so it
+// does not disclose or depend on the privilege of the pending account.
+const mfaVerifyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many MFA verification attempts, please try again later.' }
+});
+app.use('/api/v1/auth/mfa/verify-login', mfaVerifyLimiter);
+
 // ROUTES MOUNTED HERE
 app.use('/api/v1/instructors', require('./routes/courseRoutes'));
 app.use('/api/v1', require('./routes/lectureRoutes'));

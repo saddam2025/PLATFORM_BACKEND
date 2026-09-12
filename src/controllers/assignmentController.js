@@ -5,6 +5,7 @@ const Lecture = require('../models/Lecture');
 const LectureProgress = require('../models/LectureProgress');
 const { getLectureAccessState } = require('./lectureAccessController');
 const createNotificationsForAudience = require('../utils/createNotification');
+const { uploadAssignmentFile } = require('../utils/r2Upload');
 
 function getTenantFilter(req) {
   return req.tenantFilter || (req.user.tenantId ? { tenantId: req.user.tenantId } : {});
@@ -20,10 +21,6 @@ function isOwnerOfInstructor(user, instructorId) {
 async function getCourse(req, courseId) {
   if (!mongoose.isValidObjectId(courseId)) return null;
   return Course.findOne({ _id: courseId, isPublished: true, ...getTenantFilter(req) });
-}
-
-function assignmentFileUrl(file) {
-  return file ? `/uploads/assignments/${file.filename}` : null;
 }
 
 // POST /api/v1/courses/:courseId/assignments/submit
@@ -61,7 +58,9 @@ exports.submitAssignment = async (req, res, next) => {
       },
       $setOnInsert: { tenantId: course.tenantId, studentId: req.user._id, courseId: course._id, lectureId: lecture?._id || null }
     };
-    if (req.file) update.$set.submissionFileUrl = assignmentFileUrl(req.file);
+    // uploadAssignment uses Multer memory storage, so this is a direct
+    // buffer-to-R2 transfer with no temporary local assignment file.
+    if (req.file) update.$set.submissionFileUrl = await uploadAssignmentFile(req.file);
 
     const assignment = await Assignment.findOneAndUpdate(filter, update, {
       new: true,

@@ -20,6 +20,13 @@ const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    // A pending MFA-login token only identifies a password-verified attempt.
+    // It is never a session credential and therefore cannot enter any
+    // protected route (including /api/v1/super-admin/*).
+    if (decoded.type === 'mfa_pending') {
+      return res.status(401).json({ message: 'Not authorized, token failed' });
+    }
+
     const user = await User.findById(decoded.id).select('-passwordHash');
 
     if (!user) {

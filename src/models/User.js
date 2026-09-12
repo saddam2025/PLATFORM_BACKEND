@@ -20,6 +20,11 @@ const userSchema = new mongoose.Schema(
     fatherPhone: { type: String, default: '' },
     motherPhone: { type: String, default: '' },
     passwordHash: { type: String, required: true, select: true },
+    // TOTP material is intentionally opt-in for queries. It is only selected
+    // inside the MFA controller, never in profile or normal auth responses.
+    mfaEnabled: { type: Boolean, default: false },
+    mfaSecret: { type: String, default: null, select: false },
+    mfaBackupCodes: { type: [String], default: [], select: false },
     role: {
       type: String,
       enum: ['super_admin', 'admin', 'assistant', 'student', 'parent'],
@@ -145,6 +150,8 @@ userSchema.set('toJSON', {
     delete ret.inviteToken;
     delete ret.paymobApiKey;
     delete ret.paymobWebhookSecret;
+    delete ret.mfaSecret;
+    delete ret.mfaBackupCodes;
     return ret;
   }
 });

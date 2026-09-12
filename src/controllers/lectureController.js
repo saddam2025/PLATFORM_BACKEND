@@ -7,7 +7,9 @@ const CourseEnrollment = require('../models/CourseEnrollment');
 const Quiz = require('../models/Quiz');
 const Tenant = require('../models/Tenant');
 const User = require('../models/User');
+const BunnyUpload = require('../models/BunnyUpload');
 const { getLectureAccessState } = require('./lectureAccessController');
+const { createVideoSlot, directTusUpload, getVerifiedUploadedVideo, playbackUrls, DIRECT_UPLOAD_TTL_SECONDS } = require('../utils/bunnyStream');
 
 function ownsInstructor(user, instructorId) {
   return (user.role === 'admin' && String(user._id) === String(instructorId))
@@ -42,7 +44,7 @@ exports.createLecture = async (req, res, next) => {
       order: nextOrder,
       price: Number(req.body.price) || 0,
       thumbnailUrl: req.files?.thumbnail?.[0] ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}` : null,
-      videoUrl: req.files?.video?.[0] ? `/uploads/videos/${req.files.video[0].filename}` : null,
+      videoUrl: null,
       homeworkUrl: req.files?.homework?.[0] ? `/uploads/homework/${req.files.homework[0].filename}` : null,
       accessPeriodDays: Number(req.body.accessPeriodDays) || 10,
       maxViews: Number(req.body.maxViews) || 10,
@@ -59,7 +61,6 @@ function lectureFields(req) {
   if (req.body.quizId !== undefined) fields.quizId = req.body.quizId || null;
   if (req.body.isPublished !== undefined) fields.isPublished = req.body.isPublished === true || req.body.isPublished === 'true';
   if (req.files?.thumbnail?.[0]) fields.thumbnailUrl = `/uploads/thumbnails/${req.files.thumbnail[0].filename}`;
-  if (req.files?.video?.[0]) fields.videoUrl = `/uploads/videos/${req.files.video[0].filename}`;
   if (req.files?.homework?.[0]) fields.homeworkUrl = `/uploads/homework/${req.files.homework[0].filename}`;
   return fields;
 }
@@ -88,6 +89,56 @@ exports.updateLecture = async (req, res, next) => {
     Object.assign(lecture, lectureFields(req)); await lecture.save();
     if (lecture.quizId) await Quiz.updateOne({ _id: lecture.quizId, ...req.tenantFilter }, { $set: { courseId: lecture.courseId, lectureId: lecture._id, type: 'lecture', instructorId: lecture.instructorId } });
     res.json({ data: lecture });
+  } catch (err) { next(err); }
+};
+
+// POST /api/v1/instructors/:instructorId/courses/:courseId/lectures/:lectureId/video-upload-init
+exports.initLectureVideoUpload = async (req, res, next) => {
+  try {
+    const lecture = await getOwnedLecture(req);
+    if (lecture === false) return res.status(403).json({ message: 'غير مصرح لك برفع فيديو لهذه المحاضرة' });
+    if (!lecture) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    const { settings, videoId } = await createVideoSlot(req.body?.title || lecture.title_ar || lecture.title_en || 'Lecture');
+    const pending = await BunnyUpload.create({ tenantId: req.user.tenantId, instructorId: req.params.instructorId, uploadedBy: req.user._id, target: 'lecture', bunnyVideoId: videoId, courseId: lecture.courseId, lectureId: lecture._id, expiresAt: new Date(Date.now() + DIRECT_UPLOAD_TTL_SECONDS * 1000) });
+    return res.status(201).json({ data: { uploadId: pending._id, videoId, upload: directTusUpload(videoId, settings) } });
+  } catch (err) { next(err); }
+};
+
+// POST /api/v1/instructors/:instructorId/courses/:courseId/lectures/:lectureId/confirm-video-upload
+exports.confirmLectureVideoUpload = async (req, res, next) => {
+  try {
+    const lecture = await getOwnedLecture(req);
+    const { uploadId } = req.body || {};
+    if (lecture === false) return res.status(403).json({ message: 'غير مصرح لك بتأكيد رفع فيديو لهذه المحاضرة' });
+    if (!lecture) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
+    if (!mongoose.isValidObjectId(uploadId)) return res.status(400).json({ message: 'طلب الرفع غير صالح' });
+    const pending = await BunnyUpload.findOne({ _id: uploadId, target: 'lecture', tenantId: req.user.tenantId, instructorId: req.params.instructorId, uploadedBy: req.user._id, courseId: lecture.courseId, lectureId: lecture._id });
+    if (!pending || pending.expiresAt <= new Date()) return res.status(404).json({ message: 'طلب رفع الفيديو غير موجود أو منتهي' });
+
+    // Bunny is queried with the private server API key before the database is
+    // changed. A client-side "complete" assertion alone can never set videoUrl.
+    const { video, settings } = await getVerifiedUploadedVideo(pending.bunnyVideoId);
+    const claimed = await BunnyUpload.findOneAndUpdate(
+      { _id: pending._id, expiresAt: { $gt: new Date() }, confirmedAt: null },
+      { $set: { confirmedAt: new Date() } },
+      { new: true }
+    );
+    if (!claimed) {
+      const existing = await Lecture.findOne({ bunnyVideoId: pending.bunnyVideoId, ...req.tenantFilter });
+      if (existing) return res.json({ data: existing });
+      return res.status(409).json({ message: 'يجري تأكيد هذا الرفع بالفعل؛ أعد المحاولة بعد لحظات' });
+    }
+    try {
+      Object.assign(lecture, { bunnyVideoId: video.guid, ...playbackUrls(video.guid, settings) });
+      await lecture.save();
+      await BunnyUpload.deleteOne({ _id: claimed._id });
+      return res.json({ data: lecture });
+    } catch (err) {
+      const existing = await Lecture.findOne({ bunnyVideoId: pending.bunnyVideoId, ...req.tenantFilter });
+      if (existing) return res.json({ data: existing });
+      await BunnyUpload.updateOne({ _id: claimed._id }, { $set: { confirmedAt: null } });
+      throw err;
+    }
   } catch (err) { next(err); }
 };
 

@@ -14,6 +14,8 @@ const lectureSchema = new mongoose.Schema({
   price: { type: Number, required: true, default: 0, min: 0 },
   thumbnailUrl: { type: String, default: null },
   videoUrl: { type: String, default: null },
+  bunnyVideoId: { type: String, default: null, unique: true, sparse: true },
+  bunnyEmbedUrl: { type: String, default: null },
   homeworkUrl: { type: String, default: null },
   quizId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quiz', default: null },
   accessPeriodDays: { type: Number, default: 10, min: 1 },
