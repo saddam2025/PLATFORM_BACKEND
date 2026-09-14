@@ -2,13 +2,12 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { generateSecret, generateURI, verifySync } = require('otplib');
-const fs = require('fs');
-const path = require('path');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Tenant = require('../models/Tenant');
 const { STAGE_ENUM, TRACK_ENUM } = require('../models/User');
 const { PASSWORD_POLICY_MESSAGE, hasValidPassword } = require('../utils/passwordPolicy');
+const { uploadImageFile, validateR2File } = require('../utils/r2Upload');
 
 const TRACK_STAGE_IDS = new Set(['grade-10', 'baccalaureate-1', 'baccalaureate-2', 'grade-11', 'grade-12']);
 
@@ -56,36 +55,6 @@ function createPendingLoginToken(userId) {
   return jwt.sign({ id: userId, type: 'mfa_pending' }, process.env.JWT_SECRET, {
     expiresIn: MFA_PENDING_LOGIN_EXPIRES_IN
   });
-}
-
-const AVATAR_DIRECTORY = path.join(__dirname, '..', 'uploads', 'avatars');
-
-async function isValidAvatarImage(filePath) {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(12);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const isJpeg = bytesRead >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-    const isPng = bytesRead >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-    const isWebp = bytesRead >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
-    return isJpeg || isPng || isWebp;
-  } finally {
-    await handle.close();
-  }
-}
-
-async function removeAvatarFile(avatarUrl) {
-  if (!avatarUrl || !avatarUrl.startsWith('/uploads/avatars/')) return;
-
-  const filename = path.basename(avatarUrl);
-  const filePath = path.resolve(AVATAR_DIRECTORY, filename);
-  if (!filePath.startsWith(`${path.resolve(AVATAR_DIRECTORY)}${path.sep}`)) return;
-
-  try {
-    await fs.promises.unlink(filePath);
-  } catch (err) {
-    if (err.code !== 'ENOENT') console.error('Failed to delete old avatar:', err);
-  }
 }
 
 // POST /api/v1/auth/register
@@ -359,25 +328,18 @@ exports.updateMyAvatar = async (req, res, next) => {
       return res.status(400).json({ message: 'Avatar image is required' });
     }
 
-    if (!await isValidAvatarImage(req.file.path)) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ message: 'Avatar must be a valid JPEG, PNG, or WebP image' });
-    }
+    validateR2File(req.file, ['image/jpeg', 'image/png', 'image/webp'], 3 * 1024 * 1024, 'Avatar image');
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
       return res.status(401).json({ message: 'Not authorized, user not found' });
     }
 
-    const oldAvatarUrl = user.avatarUrl;
-    user.avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    user.avatarUrl = await uploadImageFile(req.file, 'avatars', 'Avatar image');
     await user.save();
-    await removeAvatarFile(oldAvatarUrl);
 
     res.json({ data: { avatarUrl: user.avatarUrl } });
   } catch (err) {
-    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     next(err);
   }
 };

@@ -1,48 +1,7 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-
-const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
-const SUBDIRS = { video: 'videos', thumbnail: 'thumbnails', homework: 'homework', avatar: 'avatars' };
-
-// Ensure target directories exist at startup — avoids runtime ENOENT errors
-// on first upload in a fresh environment.
-Object.values(SUBDIRS).forEach((dir) => {
-  const fullPath = path.join(UPLOAD_ROOT, dir);
-  if (!fs.existsSync(fullPath)) {
-    fs.mkdirSync(fullPath, { recursive: true });
-  }
-});
-
-function destinationForField(fieldname) {
-  if (fieldname === 'video') return SUBDIRS.video;
-  if (fieldname === 'thumbnail') return SUBDIRS.thumbnail;
-  if (fieldname === 'homework') return SUBDIRS.homework;
-  if (fieldname === 'avatar') return SUBDIRS.avatar;
-  return null;
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const subdir = destinationForField(file.fieldname);
-    if (!subdir) {
-      return cb(new Error(`Unexpected upload field: ${file.fieldname}`));
-    }
-    cb(null, path.join(UPLOAD_ROOT, subdir));
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const avatarExtensions = {
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/webp': '.webp'
-    };
-    const ext = file.fieldname === 'avatar'
-      ? avatarExtensions[file.mimetype]
-      : path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-  }
-});
+// Files that are persisted by this API are buffered only long enough for the
+// controller to send them to R2. Railway's container filesystem is ephemeral.
+const storage = multer.memoryStorage();
 
 // OWASP note: never trust the file extension alone — mimetype is checked
 // explicitly here, since a malicious actor can rename any file's extension.
@@ -116,7 +75,7 @@ const uploadAssignment = (req, res, next) => {
 };
 
 const reelMulter = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'video' && ['video/mp4', 'video/webm'].includes(file.mimetype)) return cb(null, true);
     return cb(new Error('Reel video must be an MP4 or WebM file'), false);
@@ -125,16 +84,10 @@ const reelMulter = multer({
 });
 
 async function hasValidReelSignature(file) {
-  const handle = await fs.promises.open(file.path, 'r');
-  try {
-    const buffer = Buffer.alloc(12);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const isWebm = bytesRead >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    const isMp4 = bytesRead >= 8 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
-    return (file.mimetype === 'video/webm' && isWebm) || (file.mimetype === 'video/mp4' && isMp4);
-  } finally {
-    await handle.close();
-  }
+  const buffer = file.buffer || Buffer.alloc(0);
+  const isWebm = buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  const isMp4 = buffer.length >= 8 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+  return (file.mimetype === 'video/webm' && isWebm) || (file.mimetype === 'video/mp4' && isMp4);
 }
 
 const uploadReelVideo = (req, res, next) => {
@@ -143,12 +96,10 @@ const uploadReelVideo = (req, res, next) => {
     if (!req.file) return res.status(400).json({ message: 'ملف الفيديو مطلوب' });
     try {
       if (!await hasValidReelSignature(req.file)) {
-        await fs.promises.unlink(req.file.path).catch(() => {});
         return res.status(400).json({ message: 'محتوى ملف الفيديو لا يطابق نوع MP4 أو WebM' });
       }
       next();
     } catch (validationError) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
       next(validationError);
     }
   });

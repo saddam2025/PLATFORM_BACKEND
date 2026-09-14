@@ -10,6 +10,7 @@ const User = require('../models/User');
 const BunnyUpload = require('../models/BunnyUpload');
 const { getLectureAccessState } = require('./lectureAccessController');
 const { createVideoSlot, directTusUpload, getVerifiedUploadedVideo, playbackUrls, DIRECT_UPLOAD_TTL_SECONDS } = require('../utils/bunnyStream');
+const { uploadHomeworkFile, uploadImageFile } = require('../utils/r2Upload');
 
 function ownsInstructor(user, instructorId) {
   return (user.role === 'admin' && String(user._id) === String(instructorId))
@@ -43,9 +44,9 @@ exports.createLecture = async (req, res, next) => {
       // atomic reorder endpoint after creation.
       order: nextOrder,
       price: Number(req.body.price) || 0,
-      thumbnailUrl: req.files?.thumbnail?.[0] ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}` : null,
+      thumbnailUrl: req.files?.thumbnail?.[0] ? await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Lecture thumbnail') : null,
       videoUrl: null,
-      homeworkUrl: req.files?.homework?.[0] ? `/uploads/homework/${req.files.homework[0].filename}` : null,
+      homeworkUrl: req.files?.homework?.[0] ? await uploadHomeworkFile(req.files.homework[0]) : null,
       accessPeriodDays: Number(req.body.accessPeriodDays) || 10,
       maxViews: Number(req.body.maxViews) || 10,
       isPublished: req.body.isPublished === true || req.body.isPublished === 'true'
@@ -54,14 +55,14 @@ exports.createLecture = async (req, res, next) => {
   } catch (err) { if (err.code === 11000) return res.status(409).json({ message: 'ترتيب المحاضرة مستخدم بالفعل؛ غيّره أو أعد المحاولة' }); next(err); }
 };
 
-function lectureFields(req) {
+async function lectureFields(req) {
   const fields = {};
   for (const key of ['title_ar', 'title_en', 'description_ar', 'description_en']) if (req.body[key] !== undefined) fields[key] = req.body[key];
   for (const key of ['order', 'price', 'accessPeriodDays', 'maxViews']) if (req.body[key] !== undefined) fields[key] = Number(req.body[key]);
   if (req.body.quizId !== undefined) fields.quizId = req.body.quizId || null;
   if (req.body.isPublished !== undefined) fields.isPublished = req.body.isPublished === true || req.body.isPublished === 'true';
-  if (req.files?.thumbnail?.[0]) fields.thumbnailUrl = `/uploads/thumbnails/${req.files.thumbnail[0].filename}`;
-  if (req.files?.homework?.[0]) fields.homeworkUrl = `/uploads/homework/${req.files.homework[0].filename}`;
+  if (req.files?.thumbnail?.[0]) fields.thumbnailUrl = await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Lecture thumbnail');
+  if (req.files?.homework?.[0]) fields.homeworkUrl = await uploadHomeworkFile(req.files.homework[0]);
   return fields;
 }
 
@@ -86,7 +87,7 @@ exports.updateLecture = async (req, res, next) => {
     const lecture = await getOwnedLecture(req);
     if (lecture === false) return res.status(403).json({ message: 'غير مصرح لك بإدارة محاضرات هذا الكورس' });
     if (!lecture) return res.status(404).json({ message: 'المحاضرة غير موجودة' });
-    Object.assign(lecture, lectureFields(req)); await lecture.save();
+    Object.assign(lecture, await lectureFields(req)); await lecture.save();
     if (lecture.quizId) await Quiz.updateOne({ _id: lecture.quizId, ...req.tenantFilter }, { $set: { courseId: lecture.courseId, lectureId: lecture._id, type: 'lecture', instructorId: lecture.instructorId } });
     res.json({ data: lecture });
   } catch (err) { next(err); }

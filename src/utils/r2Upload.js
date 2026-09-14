@@ -32,23 +32,23 @@ function getR2Config() {
   };
 }
 
-function validateAssignmentFile(file) {
-  if (!file?.buffer || !Buffer.isBuffer(file.buffer)) throw uploadError('Assignment file is required');
-  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_ASSIGNMENT_FILE_SIZE || file.buffer.length > MAX_ASSIGNMENT_FILE_SIZE) {
-    throw uploadError('Assignment file must be 10MB or smaller');
+function validateR2File(file, allowedMimeTypes = Object.keys(FILE_TYPES), maxSize = MAX_ASSIGNMENT_FILE_SIZE, label = 'File') {
+  if (!file?.buffer || !Buffer.isBuffer(file.buffer)) throw uploadError(`${label} is required`);
+  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxSize || file.buffer.length > maxSize) {
+    throw uploadError(`${label} must be ${Math.floor(maxSize / (1024 * 1024))}MB or smaller`);
   }
 
   const fileType = FILE_TYPES[file.mimetype];
-  if (!fileType || !fileType.signature(file.buffer)) {
-    throw uploadError('Assignment file content does not match an allowed PDF, Word, JPEG, PNG, or WebP type');
+  if (!fileType || !allowedMimeTypes.includes(file.mimetype) || !fileType.signature(file.buffer)) {
+    throw uploadError(`${label} content does not match an allowed file type`);
   }
   return fileType;
 }
 
-async function uploadAssignmentFile(file) {
-  const fileType = validateAssignmentFile(file);
+async function uploadR2File(file, { prefix, allowedMimeTypes, maxSize, label = 'File', contentDisposition = 'inline' }) {
+  const fileType = validateR2File(file, allowedMimeTypes, maxSize, label);
   const config = getR2Config();
-  const key = `assignments/${new Date().toISOString().slice(0, 10).replace(/-/g, '/')}/${crypto.randomUUID()}.${fileType.extension}`;
+  const key = `${prefix}/${new Date().toISOString().slice(0, 10).replace(/-/g, '/')}/${crypto.randomUUID()}.${fileType.extension}`;
   const client = new S3Client({
     region: 'auto',
     endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
@@ -61,15 +61,46 @@ async function uploadAssignmentFile(file) {
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,
-      ContentDisposition: 'inline'
+      ContentDisposition: contentDisposition
     }));
   } catch (err) {
     // Keep provider details and credentials out of API responses.
-    console.error(`R2 assignment upload failed: ${err.name || 'unknown error'}`);
-    throw uploadError('Could not upload assignment file', 502);
+    console.error(`R2 ${prefix} upload failed: ${err.name || 'unknown error'}`);
+    throw uploadError(`Could not upload ${label.toLowerCase()}`, 502);
   }
 
   return `${config.publicUrlBase}/${key}`;
 }
 
-module.exports = { MAX_ASSIGNMENT_FILE_SIZE, uploadAssignmentFile, validateAssignmentFile };
+function validateAssignmentFile(file) {
+  return validateR2File(file, Object.keys(FILE_TYPES), MAX_ASSIGNMENT_FILE_SIZE, 'Assignment file');
+}
+
+function uploadAssignmentFile(file) {
+  return uploadR2File(file, {
+    prefix: 'assignments',
+    allowedMimeTypes: Object.keys(FILE_TYPES),
+    maxSize: MAX_ASSIGNMENT_FILE_SIZE,
+    label: 'Assignment file'
+  });
+}
+
+function uploadHomeworkFile(file) {
+  return uploadR2File(file, {
+    prefix: 'homework',
+    allowedMimeTypes: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    maxSize: MAX_ASSIGNMENT_FILE_SIZE,
+    label: 'Homework file'
+  });
+}
+
+function uploadImageFile(file, prefix, label = 'Image') {
+  return uploadR2File(file, {
+    prefix,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    maxSize: MAX_ASSIGNMENT_FILE_SIZE,
+    label
+  });
+}
+
+module.exports = { MAX_ASSIGNMENT_FILE_SIZE, uploadAssignmentFile, uploadHomeworkFile, uploadImageFile, validateAssignmentFile, validateR2File };

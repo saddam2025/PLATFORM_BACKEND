@@ -40,23 +40,14 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-// Upload assets are rendered by the separately-hosted frontend in development.
-// Helmet's default Cross-Origin-Resource-Policy is `same-origin`; override it
-// only for the public upload tree, rather than weakening it application-wide.
-// This route contains the avatar, thumbnail, and other explicit upload files
-// and never exposes the project root.
+// Read-only compatibility for records created before the R2 migration. New
+// uploads are never written here; Railway deployments should treat these URLs
+// as legacy content that must be re-uploaded if the old ephemeral file is gone.
 app.use('/uploads', (req, res, next) => {
-  // Course and lecture videos are never public static assets. They are served
-  // through the lecture access controller, which verifies entitlement for
-  // every content/range request.
   if (req.path.startsWith('/videos/')) return res.status(404).end();
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 }, express.static(path.join(__dirname, 'uploads')));
-
-// Upload middleware writes only to src/uploads/{avatars,videos,thumbnails,homework}.
-// Expose that directory at the URL prefix stored by the corresponding models;
-// never expose the project root itself.
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));

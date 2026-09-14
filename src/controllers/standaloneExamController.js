@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { uploadImageFile } = require('../utils/r2Upload');
 const StandaloneExam = require('../models/StandaloneExam');
 const User = require('../models/User');
 const StandaloneExamSubmission = require('../models/StandaloneExamSubmission');
@@ -85,7 +86,7 @@ exports.createStandaloneExam = async (req, res, next) => {
     if (managed.error) return res.status(managed.status).json({ message: managed.error });
     const parsed = parseExamFields(req.body, { creating: true });
     if (parsed.error) return res.status(400).json({ message: parsed.error });
-    const thumbnailUrl = req.files?.thumbnail?.[0] ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}` : parsed.fields.thumbnailUrl;
+    const thumbnailUrl = req.files?.thumbnail?.[0] ? await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Exam thumbnail') : parsed.fields.thumbnailUrl;
     const exam = await StandaloneExam.create({ ...parsed.fields, thumbnailUrl, tenantId: req.user.tenantId, createdBy: req.user._id, status: 'draft' });
     return res.status(201).json({ data: exam });
   } catch (err) {
@@ -113,7 +114,7 @@ exports.updateStandaloneExam = async (req, res, next) => {
     const parsed = parseExamFields(req.body);
     if (parsed.error) return res.status(400).json({ message: parsed.error });
     if (Object.keys(parsed.fields).length === 0) return res.status(400).json({ message: 'لا توجد بيانات لتحديثها' });
-    const thumbnailUrl = req.files?.thumbnail?.[0] ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}` : parsed.fields.thumbnailUrl;
+    const thumbnailUrl = req.files?.thumbnail?.[0] ? await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Exam thumbnail') : parsed.fields.thumbnailUrl;
     Object.assign(found.exam, { ...parsed.fields, ...(thumbnailUrl !== undefined ? { thumbnailUrl } : {}) });
     await found.exam.save();
     return res.json({ data: found.exam });

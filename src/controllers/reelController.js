@@ -58,58 +58,6 @@ function parsePagination(query) {
   return { page, limit };
 }
 
-// POST /api/v1/instructors/:instructorId/reels
-// protect + authorize('admin','assistant') + requirePermission('can_upload_video')
-// for assistants (applied at route level, reusing the exact same permission
-// from B2/B3 — feature #15 requires identical upload permissions, so no new
-// permission flag is introduced here).
-exports.createReel = async (req, res, next) => {
-  try {
-    const { instructorId } = req.params;
-    const { caption, stage } = req.body;
-
-    if (!isOwnerOfInstructor(req.user, instructorId)) {
-      return res.status(403).json({ message: 'غير مصرح لك برفع ريلز لهذا الحساب' });
-    }
-
-    const videoUrl = req.files?.video?.[0]
-      ? `/uploads/videos/${req.files.video[0].filename}`
-      : req.file
-      ? `/uploads/videos/${req.file.filename}`
-      : null;
-
-    if (!videoUrl) {
-      return res.status(400).json({ message: 'ملف الفيديو مطلوب' });
-    }
-
-    const reel = await Reel.create({
-      tenantId: req.user.tenantId,
-      instructorId,
-      uploadedBy: req.user._id,
-      videoUrl,
-      caption: caption || '',
-      stage: stage || null
-    });
-
-    // CROSS-BATCH WIRE-UP: notify students (and per feature #13, parents too,
-    // since a new reel is content-adjacent the same way a new course is)
-    // whenever a reel is uploaded.
-    await createNotificationsForAudience({
-      tenantId: req.user.tenantId,
-      instructorId,
-      type: 'new_reel',
-      title: 'ريلز جديد',
-      body: caption || 'تم نشر مقطع فيديو قصير جديد',
-      relatedId: reel._id,
-      audience: 'both'
-    });
-
-    res.status(201).json({ data: reel });
-  } catch (err) {
-    next(err);
-  }
-};
-
 // GET /api/v1/instructors/:instructorId/reels
 // protect + authorize('student', 'admin', 'assistant').
 // A student sees reels only when both their own academic stage matches the

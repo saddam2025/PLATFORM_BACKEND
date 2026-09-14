@@ -8,6 +8,7 @@ const LectureAccess = require('../models/LectureAccess');
 const CourseEnrollment = require('../models/CourseEnrollment');
 const Lecture = require('../models/Lecture');
 const createNotificationsForAudience = require('../utils/createNotification'); // NEW import for this batch
+const { uploadImageFile } = require('../utils/r2Upload');
 
 async function getOptionalUser(req) {
   const authHeader = req.headers.authorization;
@@ -88,7 +89,7 @@ exports.createCourse = async (req, res, next) => {
     const order = existingCount + 1;
 
     const thumbnailUrl = req.files?.thumbnail?.[0]
-      ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}`
+      ? await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Course thumbnail')
       : null;
     // A Course is a container, never a watchable lecture. New course-level
     // video/homework inputs are deliberately ignored; those belong to Lecture.
@@ -280,7 +281,7 @@ exports.updateCourse = async (req, res, next) => {
     }
 
     if (req.files?.thumbnail?.[0]) {
-      course.thumbnailUrl = `/uploads/thumbnails/${req.files.thumbnail[0].filename}`;
+      course.thumbnailUrl = await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Course thumbnail');
     }
     // A Course is metadata only. Video, homework, and quizzes are stored on
     // individual Lecture documents and are never updated through this route.
