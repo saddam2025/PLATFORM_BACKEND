@@ -18,6 +18,16 @@ function publicInstructor(tenant) {
   return { name: tenant.name, subdomain: tenant.subdomain, avatar: tenant.logoUrl || null };
 }
 
+async function attachPublishedContentCounts(courses) {
+  if (!courses.length) return courses;
+  const counts = await Lecture.aggregate([
+    { $match: { courseId: { $in: courses.map((course) => course._id) }, isPublished: true } },
+    { $group: { _id: '$courseId', lectureCount: { $sum: 1 }, homeworkCount: { $sum: { $cond: [{ $ne: [{ $ifNull: ['$homeworkUrl', ''] }, ''] }, 1, 0] } } } }
+  ]);
+  const byCourse = new Map(counts.map((count) => [String(count._id), count]));
+  return courses.map((course) => ({ ...course, lectureCount: byCourse.get(String(course._id))?.lectureCount || 0, homeworkCount: byCourse.get(String(course._id))?.homeworkCount || 0 }));
+}
+
 // GET /api/v1/public/featured-courses
 // This is the one intentional cross-tenant content query: the root landing
 // page is a public discovery feed, not a request scoped to one tenant.
@@ -36,7 +46,8 @@ exports.listFeaturedCourses = async (req, res, next) => {
       .limit(FEATURED_LIMIT)
       .lean();
 
-    res.json({ data: courses.map((course) => {
+    const coursesWithCounts = await attachPublishedContentCounts(courses);
+    res.json({ data: coursesWithCounts.map((course) => {
       const tenant = tenantById.get(String(course.tenantId));
       return { ...course, instructor: publicInstructor(tenant), instructorName: tenant.name, subdomain: tenant.subdomain };
     }) });

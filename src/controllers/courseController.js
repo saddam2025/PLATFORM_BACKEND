@@ -164,9 +164,21 @@ exports.listCourses = async (req, res, next) => {
     }
 
     let courses = await Course.find(filter).sort({ order: 1 }).populate('categoryId', 'name');
-    const lectures = await Lecture.find({ courseId: { $in: courses.map((course) => course._id) }, isPublished: true, tenantId: instructor.tenantId }).select('_id courseId').lean();
-    const lectureCountByCourse = new Map();
-    for (const lecture of lectures) lectureCountByCourse.set(String(lecture.courseId), (lectureCountByCourse.get(String(lecture.courseId)) || 0) + 1);
+    const courseIds = courses.map((course) => course._id);
+    // Live counts intentionally match the published lectures visible to
+    // visitors on the course-detail page, avoiding stale Course counters.
+    const [lectures, contentCounts] = await Promise.all([
+      Lecture.find({ courseId: { $in: courseIds }, isPublished: true, tenantId: instructor.tenantId }).select('_id courseId').lean(),
+      courseIds.length ? Lecture.aggregate([
+        { $match: { courseId: { $in: courseIds }, isPublished: true, tenantId: instructor.tenantId } },
+        { $group: {
+          _id: '$courseId',
+          lectureCount: { $sum: 1 },
+          homeworkCount: { $sum: { $cond: [{ $ne: [{ $ifNull: ['$homeworkUrl', ''] }, ''] }, 1, 0] } }
+        } }
+      ]) : []
+    ]);
+    const contentCountByCourse = new Map(contentCounts.map((row) => [String(row._id), row]));
 
     if (requester?.role === 'student') {
       const now = new Date();
@@ -195,7 +207,10 @@ exports.listCourses = async (req, res, next) => {
           hasPartialLectureAccess: partialLectureCountByCourse.has(String(course._id))
         }));
     }
-    res.json({ data: courses.map((course) => ({ ...(course.toObject ? course.toObject() : course), lectureCount: lectureCountByCourse.get(String(course._id)) || 0 })) });
+    res.json({ data: courses.map((course) => {
+      const contentCount = contentCountByCourse.get(String(course._id));
+      return { ...(course.toObject ? course.toObject() : course), lectureCount: contentCount?.lectureCount || 0, homeworkCount: contentCount?.homeworkCount || 0 };
+    }) });
   } catch (err) {
     next(err);
   }
