@@ -1,7 +1,7 @@
 const Tenant = require('../models/Tenant');
 const mongoose = require('mongoose');
 
-const LIST_FIELDS = 'name subdomain logoUrl themeColors.primary themeColors.secondary';
+const LIST_FIELDS = 'name subdomain logoUrl faviconUrl themeColors.primary themeColors.secondary';
 const DETAIL_FIELDS = `${LIST_FIELDS} tagline bio subject location coverPhotoUrl stagesOffered monthlyPrice perLecturePrice supportPhone`;
 
 function withOwnerImage(tenant) {
@@ -10,10 +10,14 @@ function withOwnerImage(tenant) {
   const { ownerId, ...publicTenant } = tenant;
   return {
     ...publicTenant,
+    // This is deliberately separate from tenant branding: changing the
+    // teacher's profile picture must update public teacher cards without
+    // replacing the platform logo.
+    profileImageUrl: ownerAvatarUrl,
     // A tenant logo takes precedence, but a teacher avatar remains a useful
     // public fallback when an admin has not configured a separate logo/cover.
     logoUrl: publicTenant.logoUrl || ownerAvatarUrl,
-    coverPhotoUrl: publicTenant.coverPhotoUrl || publicTenant.logoUrl || ownerAvatarUrl
+    coverPhotoUrl: publicTenant.coverPhotoUrl || ownerAvatarUrl || publicTenant.logoUrl
   };
 }
 

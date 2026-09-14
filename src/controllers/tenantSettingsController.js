@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Tenant = require('../models/Tenant');
 const User = require('../models/User');
+const { uploadImageFile } = require('../utils/r2Upload');
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -34,7 +35,7 @@ function settingsResponse(tenant, admin) {
 function getSettingsUpdateData(body) {
   if (!isPlainObject(body)) throw createHttpError(400, 'بيانات الطلب غير صالحة');
   const tenantUpdates = {};
-  const tenantFields = ['name', 'logoUrl', 'supportPhone', 'supportEmail', 'themeColors', 'videoDelivery', 'documentDelivery', 'notificationPreferences'];
+  const tenantFields = ['name', 'logoUrl', 'faviconUrl', 'supportPhone', 'supportEmail', 'themeColors', 'videoDelivery', 'documentDelivery', 'notificationPreferences'];
   for (const field of tenantFields) {
     if (body[field] !== undefined) tenantUpdates[field] = body[field];
   }
@@ -45,6 +46,7 @@ function getSettingsUpdateData(body) {
 
   if (tenantUpdates.name !== undefined && (typeof tenantUpdates.name !== 'string' || !tenantUpdates.name.trim())) throw createHttpError(400, 'اسم المنصة غير صالح');
   if (tenantUpdates.logoUrl !== undefined && tenantUpdates.logoUrl !== null && typeof tenantUpdates.logoUrl !== 'string') throw createHttpError(400, 'رابط الشعار غير صالح');
+  if (tenantUpdates.faviconUrl !== undefined && tenantUpdates.faviconUrl !== null && typeof tenantUpdates.faviconUrl !== 'string') throw createHttpError(400, 'رابط أيقونة المتصفح غير صالح');
   for (const field of ['supportPhone', 'supportEmail']) {
     if (tenantUpdates[field] !== undefined && (typeof tenantUpdates[field] !== 'string' || tenantUpdates[field].length > 200)) throw createHttpError(400, `${field} غير صالح`);
   }
@@ -67,6 +69,23 @@ function getSettingsUpdateData(body) {
   if (tenantUpdates.name) tenantUpdates.name = tenantUpdates.name.trim();
   return { tenantUpdates, adminUpdates };
 }
+
+exports.uploadOwnTenantBrandAsset = async (req, res, next) => {
+  try {
+    const tenant = await getOwnedTenant(req);
+    if (!tenant) return res.status(403).json({ message: 'غير مصرح لك بتعديل إعدادات مؤسسة أخرى' });
+    const assetType = req.params.assetType;
+    if (!['logo', 'favicon'].includes(assetType)) throw createHttpError(404, 'نوع ملف الهوية غير معروف');
+    if (!req.file) throw createHttpError(400, 'ملف الصورة مطلوب');
+
+    const field = assetType === 'logo' ? 'logoUrl' : 'faviconUrl';
+    tenant[field] = await uploadImageFile(req.file, `tenants/${tenant._id}/${assetType}`, assetType === 'logo' ? 'Tenant logo' : 'Tenant favicon');
+    await tenant.save();
+    res.status(201).json({ data: { [field]: tenant[field] } });
+  } catch (err) {
+    next(err);
+  }
+};
 
 exports.getOwnTenantSettings = async (req, res, next) => {
   try {

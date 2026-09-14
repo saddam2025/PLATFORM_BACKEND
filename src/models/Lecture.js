@@ -14,7 +14,10 @@ const lectureSchema = new mongoose.Schema({
   price: { type: Number, required: true, default: 0, min: 0 },
   thumbnailUrl: { type: String, default: null },
   videoUrl: { type: String, default: null },
-  bunnyVideoId: { type: String, default: null, unique: true, sparse: true },
+  // Keep this field absent until Bunny returns a real video id. A sparse
+  // unique index still indexes `null`, so a `default: null` lets only one
+  // lecture without a video exist.
+  bunnyVideoId: { type: String, unique: true, sparse: true },
   bunnyEmbedUrl: { type: String, default: null },
   homeworkUrl: { type: String, default: null },
   quizId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quiz', default: null },

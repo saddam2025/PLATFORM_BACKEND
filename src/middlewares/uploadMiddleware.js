@@ -14,8 +14,10 @@ const fileFilter = (req, file, cb) => {
   }
 
   if (field === 'thumbnail') {
-    if (file.mimetype.startsWith('image/')) return cb(null, true);
-    return cb(new Error('Invalid file type for thumbnail field: only image/* MIME types allowed'), false);
+    // Some browsers label valid PNGs copied from other apps as
+    // application/octet-stream. r2Upload validates the actual signature.
+    if (file.mimetype.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.originalname || '')) return cb(null, true);
+    return cb(new Error('Invalid file type for thumbnail field: only JPEG, PNG, or WebP images allowed'), false);
   }
 
   if (field === 'homework' || field === 'assignment') {
@@ -30,7 +32,7 @@ const fileFilter = (req, file, cb) => {
     return cb(new Error(`Invalid file type for ${field} field: only ${field === 'assignment' ? 'PDF/DOC/DOCX/JPEG/PNG/WebP' : 'PDF/DOC/DOCX'} allowed`), false);
   }
 
-  if (field === 'avatar') {
+  if (field === 'avatar' || field === 'image') {
     const allowedAvatarMimes = ['image/jpeg', 'image/png', 'image/webp'];
     if (allowedAvatarMimes.includes(file.mimetype)) return cb(null, true);
     return cb(new Error('Invalid file type for avatar field: only JPEG, PNG, and WebP images allowed'), false);
@@ -126,4 +128,14 @@ const uploadAvatar = (req, res, next) => {
   });
 };
 
-module.exports = { uploadVideo, uploadGeneral, uploadAssignment, uploadAvatar, uploadReelVideo };
+const brandingMulter = multer({ storage, fileFilter, limits: { fileSize: 3 * 1024 * 1024 } });
+
+const uploadBrandingImage = (req, res, next) => {
+  brandingMulter.single('image')(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Branding image must be 3MB or smaller' : err.message || 'Invalid branding image' });
+    if (!req.file) return res.status(400).json({ message: 'Branding image is required' });
+    next();
+  });
+};
+
+module.exports = { uploadVideo, uploadGeneral, uploadAssignment, uploadAvatar, uploadBrandingImage, uploadReelVideo };

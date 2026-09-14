@@ -34,15 +34,10 @@ exports.createLecture = async (req, res, next) => {
     const course = await Course.findOne({ _id: courseId, instructorId, ...req.tenantFilter });
     if (!course) return res.status(404).json({ message: 'الكورس غير موجود' });
     if (typeof req.body.title_ar !== 'string' || !req.body.title_ar.trim()) return res.status(400).json({ message: 'عنوان المحاضرة بالعربية مطلوب' });
-    const lastLecture = await Lecture.findOne({ courseId, ...req.tenantFilter }).sort({ order: -1 }).select('order').lean();
-    const nextOrder = Number(lastLecture?.order || 0) + 1;
-    const lecture = await Lecture.create({
+    const baseFields = {
       tenantId: req.user.tenantId, courseId, instructorId,
       title_ar: req.body.title_ar, title_en: req.body.title_en || '',
       description_ar: req.body.description_ar || '', description_en: req.body.description_en || '',
-      // New lectures append safely. Reordering is handled by the dedicated,
-      // atomic reorder endpoint after creation.
-      order: nextOrder,
       price: Number(req.body.price) || 0,
       thumbnailUrl: req.files?.thumbnail?.[0] ? await uploadImageFile(req.files.thumbnail[0], 'thumbnails', 'Lecture thumbnail') : null,
       videoUrl: null,
@@ -50,9 +45,27 @@ exports.createLecture = async (req, res, next) => {
       accessPeriodDays: Number(req.body.accessPeriodDays) || 10,
       maxViews: Number(req.body.maxViews) || 10,
       isPublished: req.body.isPublished === true || req.body.isPublished === 'true'
-    });
+    };
+    // The server, rather than a value submitted by the form, owns the order.
+    // Retrying with a fresh maximum makes the first lecture and concurrent
+    // additions safe even when the client has stale list data.
+    let lecture;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const lastLecture = await Lecture.findOne({ tenantId: req.user.tenantId, courseId, instructorId }).sort({ order: -1 }).select('order').lean();
+      try {
+        lecture = await Lecture.create({ ...baseFields, order: Number(lastLecture?.order || 0) + 1 });
+        break;
+      } catch (err) {
+        if (err.code !== 11000 || attempt === 4) throw err;
+      }
+    }
     res.status(201).json({ data: lecture });
-  } catch (err) { if (err.code === 11000) return res.status(409).json({ message: 'ترتيب المحاضرة مستخدم بالفعل؛ غيّره أو أعد المحاولة' }); next(err); }
+  } catch (err) {
+    if (err.code === 11000 && (err.keyPattern?.order || String(err.message || '').includes('courseId_1_order_1'))) {
+      return res.status(409).json({ message: 'تعذر تحديد ترتيب جديد للمحاضرة؛ أعد المحاولة.' });
+    }
+    next(err);
+  }
 };
 
 async function lectureFields(req) {
@@ -148,9 +161,14 @@ exports.reorderLectures = async (req, res, next) => {
     const { instructorId, courseId } = req.params;
     if (!ownsInstructor(req.user, instructorId)) return res.status(403).json({ message: 'غير مصرح لك بإدارة محاضرات هذا الكورس' });
     const ids = Array.isArray(req.body?.lectureIds) ? req.body.lectureIds : [];
-    const lectures = await Lecture.find({ courseId, instructorId, ...req.tenantFilter }).select('_id');
+    const lectures = await Lecture.find({ courseId, instructorId, ...req.tenantFilter }).select('_id order');
     if (ids.length !== lectures.length || new Set(ids.map(String)).size !== ids.length || !lectures.every((item) => ids.some((id) => String(id) === String(item._id)))) return res.status(400).json({ message: 'ترتيب المحاضرات غير صالح' });
-    await Promise.all(ids.map((id, index) => Lecture.updateOne({ _id: id, courseId, instructorId, ...req.tenantFilter }, { $set: { order: index + 1 } })));
+    // Move every document out of the unique order range first. Updating a
+    // swap in parallel (1 → 2 while 2 → 1) otherwise triggers the unique
+    // index even though the final order is valid.
+    const temporaryStart = Math.max(...lectures.map((lecture) => Number(lecture.order) || 0), ids.length) + ids.length + 1;
+    await Lecture.bulkWrite(ids.map((id, index) => ({ updateOne: { filter: { _id: id, courseId, instructorId, ...req.tenantFilter }, update: { $set: { order: temporaryStart + index } } } })));
+    await Lecture.bulkWrite(ids.map((id, index) => ({ updateOne: { filter: { _id: id, courseId, instructorId, ...req.tenantFilter }, update: { $set: { order: index + 1 } } } })));
     res.json({ data: await Lecture.find({ courseId, instructorId, ...req.tenantFilter }).sort({ order: 1 }) });
   } catch (err) { next(err); }
 };

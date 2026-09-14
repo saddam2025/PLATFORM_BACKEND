@@ -38,8 +38,11 @@ function validateR2File(file, allowedMimeTypes = Object.keys(FILE_TYPES), maxSiz
     throw uploadError(`${label} must be ${Math.floor(maxSize / (1024 * 1024))}MB or smaller`);
   }
 
-  const fileType = FILE_TYPES[file.mimetype];
-  if (!fileType || !allowedMimeTypes.includes(file.mimetype) || !fileType.signature(file.buffer)) {
+  // Browser MIME detection is inconsistent for files copied from messaging
+  // apps. Trust the file's signature and store the matching MIME type instead.
+  const detectedMimeType = allowedMimeTypes.find((mimeType) => FILE_TYPES[mimeType]?.signature(file.buffer));
+  const fileType = detectedMimeType ? { ...FILE_TYPES[detectedMimeType], mimeType: detectedMimeType } : null;
+  if (!fileType) {
     throw uploadError(`${label} content does not match an allowed file type`);
   }
   return fileType;
@@ -60,7 +63,7 @@ async function uploadR2File(file, { prefix, allowedMimeTypes, maxSize, label = '
       Bucket: config.bucketName,
       Key: key,
       Body: file.buffer,
-      ContentType: file.mimetype,
+      ContentType: fileType.mimeType,
       ContentDisposition: contentDisposition
     }));
   } catch (err) {

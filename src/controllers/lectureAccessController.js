@@ -56,7 +56,7 @@ exports.startLectureView = async (req, res, next) => {
       const mediaToken = jwt.sign({ sub: String(req.user._id), tenantId: String(req.user.tenantId), courseId: String(req.params.courseId), lectureId: String(req.params.lectureId), media: true }, process.env.JWT_SECRET, { expiresIn: '5m' });
       videoUrl = `${req.protocol}://${req.get('host')}/api/v1/courses/${req.params.courseId}/lectures/${req.params.lectureId}/video?token=${encodeURIComponent(mediaToken)}`;
     }
-    res.json({ data: { lecture: { ...state.lecture, videoUrl: null }, videoUrl, viewsRemaining: state.access ? Math.max(0, state.access.maxViews - state.access.viewsUsed) : null, daysRemaining: state.access ? daysRemaining(state.access.expiresAt) : null, watermark: { name: req.user.name, studentId: req.user._id } } });
+    res.json({ data: { lecture: { ...state.lecture, videoUrl: null }, videoUrl, viewsRemaining: state.access ? Math.max(0, state.access.maxViews - state.access.viewsUsed) : null, daysRemaining: state.access ? daysRemaining(state.access.expiresAt) : null, watermark: { name: req.user.name, phone: req.user.phone || '' } } });
   } catch (err) { next(err); }
 };
 
@@ -244,7 +244,7 @@ exports.startView = async (req, res, next) => {
         daysRemaining: daysRemaining(access.expiresAt),
         watermark: {
           name: req.user.name,
-          studentId: req.user._id
+          phone: req.user.phone || ''
         }
       }
     });
