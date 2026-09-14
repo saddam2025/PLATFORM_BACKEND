@@ -5,7 +5,6 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 
 const connectDB = require('./config/db');
 const errorHandler = require('./middlewares/errorHandler');
@@ -39,15 +38,6 @@ app.use(
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
-
-// Read-only compatibility for records created before the R2 migration. New
-// uploads are never written here; Railway deployments should treat these URLs
-// as legacy content that must be re-uploaded if the old ephemeral file is gone.
-app.use('/uploads', (req, res, next) => {
-  if (req.path.startsWith('/videos/')) return res.status(404).end();
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  next();
-}, express.static(path.join(__dirname, 'uploads')));
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
