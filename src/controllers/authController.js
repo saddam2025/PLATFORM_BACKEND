@@ -59,6 +59,7 @@ function createPendingLoginToken(userId) {
 
 // POST /api/v1/auth/register
 exports.register = async (req, res, next) => {
+  let session;
   try {
     const { name, email, password, role, instructorId, parentAccessCode, stage, track, phone, fatherPhone, motherPhone } = req.body;
 
@@ -71,6 +72,12 @@ exports.register = async (req, res, next) => {
     }
     if (!hasValidPassword(password)) {
       return res.status(400).json({ message: PASSWORD_POLICY_MESSAGE });
+    }
+
+    // A token is part of a successful self-registration response. Fail before
+    // writing anything when this required server configuration is absent.
+    if (!process.env.JWT_SECRET) {
+      return res.status(503).json({ message: 'التسجيل غير متاح مؤقتًا. يرجى المحاولة لاحقًا.' });
     }
 
     // NEW: stage is required specifically for students, validated against
@@ -146,12 +153,25 @@ exports.register = async (req, res, next) => {
       motherPhone: role === 'student' ? String(motherPhone).trim() : ''
     });
 
-    await user.save();
-
+    // Keep the persisted account and its required session credential atomic.
+    // Although signing normally cannot fail once JWT_SECRET is present, doing
+    // it before commit guarantees that a future change in this flow cannot
+    // report failure after the user document has been committed.
+    session = await mongoose.startSession();
+    session.startTransaction();
+    await user.save({ session });
     const token = generateToken(user._id);
+    await session.commitTransaction();
     res.status(201).json({ token, user: user.toJSON() });
   } catch (err) {
+    if (session?.inTransaction()) await session.abortTransaction();
+    if (err?.code === 11000) {
+      err.statusCode = 409;
+      err.message = 'البريد الإلكتروني مستخدم بالفعل';
+    }
     next(err);
+  } finally {
+    if (session) await session.endSession();
   }
 };
 
