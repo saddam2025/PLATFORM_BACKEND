@@ -186,12 +186,13 @@ exports.login = async (req, res, next) => {
     }
 
     const normalizedIdentifier = String(identifier).trim();
-    const user = await User.findOne({
-      $or: [
-        { email: normalizedIdentifier.toLowerCase() },
-        { phone: normalizePhone(normalizedIdentifier) }
-      ]
-    }).select('+passwordHash');
+    const isEmail = normalizedIdentifier.includes('@');
+    const query = isEmail
+      ? { email: normalizedIdentifier.toLowerCase() }
+      : { phone: normalizePhone(normalizedIdentifier) };
+    const user = await User.findOne(query).select('+passwordHash');
+    
+    console.log(1, { identifier, password }, query, user);
     if (!user) {
       return res.status(401).json(GENERIC_ERROR);
     }
