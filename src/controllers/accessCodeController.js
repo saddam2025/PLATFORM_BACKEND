@@ -73,19 +73,34 @@ exports.generateAccessCodes = async (req, res, next) => {
 };
 
 // POST /api/v1/access-codes/redeem
-// protect + authorize('student'). Body: { code }.
+// protect + authorize('student'). Body may include an expected course or
+// lecture target so a checkout screen never consumes a valid code meant for
+// another item.
 exports.redeemAccessCode = async (req, res, next) => {
   try {
-    const { code } = req.body;
+    const { code, expectedCourseId, expectedLectureId } = req.body;
     const GENERIC_ERROR = { message: 'الكود غير صالح' };
 
     if (!code) {
       return res.status(400).json(GENERIC_ERROR);
     }
 
+    const targetFilter = {};
+    if (expectedCourseId) {
+      if (!mongoose.isValidObjectId(expectedCourseId)) return res.status(400).json(GENERIC_ERROR);
+      targetFilter.courseId = expectedCourseId;
+    }
+    if (expectedLectureId) {
+      if (!mongoose.isValidObjectId(expectedLectureId)) return res.status(400).json(GENERIC_ERROR);
+      targetFilter.type = 'single_lecture';
+      targetFilter.lectureId = expectedLectureId;
+    } else if (expectedCourseId) {
+      targetFilter.type = 'full_course';
+    }
+
     const hash = hashCode(code.trim());
     const accessCode = await AccessCode.findOneAndUpdate(
-      { code_hash: hash, ...req.tenantFilter, isRedeemed: false },
+      { code_hash: hash, ...req.tenantFilter, isRedeemed: false, ...targetFilter },
       { $set: { isRedeemed: true, redeemedBy: req.user._id, redeemedAt: new Date() } },
       { new: true }
     );

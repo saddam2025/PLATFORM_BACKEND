@@ -6,7 +6,7 @@ const { generateScratchCards, listScratchCards, redeemScratchCard } = require('.
 
 const gateGenerate = (req, res, next) => {
   if (req.user.role === 'admin') return next();
-  return requirePermission('can_generate_access_codes')(req, res, next);
+  return requirePermission('can_generate_wallet_codes')(req, res, next);
 };
 
 router.post(
@@ -17,7 +17,7 @@ router.post(
   gateGenerate,
   generateScratchCards
 );
-router.get('/instructors/:instructorId/scratchcards', protect, tenantScope, authorize('admin'), listScratchCards);
+router.get('/instructors/:instructorId/scratchcards', protect, tenantScope, authorize('admin', 'assistant'), gateGenerate, listScratchCards);
 
 router.post('/scratchcards/redeem', protect, tenantScope, authorize('student'), redeemScratchCard);
 

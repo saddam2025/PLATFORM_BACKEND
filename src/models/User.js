@@ -2,7 +2,13 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const { STAGE_ENUM } = require('../constants/stages');
 
-const PERMISSION_ENUM = ['can_upload_video', 'can_grade_exams', 'can_generate_access_codes'];
+const PERMISSION_ENUM = [
+  'can_upload_video',
+  'can_grade_exams',
+  'can_create_quizzes',
+  'can_generate_access_codes',
+  'can_generate_wallet_codes'
+];
 const TRACK_ENUM = ['علمي علوم', 'علمي رياضة', 'أدبي'];
 
 const userSchema = new mongoose.Schema(

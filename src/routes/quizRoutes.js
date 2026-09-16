@@ -19,7 +19,7 @@ const {
 const authoringRouter = express.Router();
 const quizAuthoringGate = (req, res, next) => {
   if (req.user.role === 'admin') return next();
-  return requirePermission('can_grade_exams')(req, res, next);
+  return requirePermission('can_create_quizzes')(req, res, next);
 };
 
 authoringRouter.get('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, getCourseQuizForEditing);
