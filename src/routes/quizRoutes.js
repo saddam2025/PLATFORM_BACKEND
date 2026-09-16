@@ -4,6 +4,7 @@ const { protect, authorize, requirePermission } = require('../middlewares/authMi
 const tenantScope = require('../middlewares/tenantScope.middleware');
 const {
   getQuiz,
+  getMyQuizSubmission,
   checkMonthlyExamEligibility,
   submitQuiz,
   getSubmission,
@@ -26,6 +27,7 @@ authoringRouter.get('/:instructorId/courses/:courseId/lectures/:lectureId/quiz',
 authoringRouter.post('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, createCourseQuiz);
 
 router.get('/me/exam-grades', protect, tenantScope, authorize('student'), listMyExamGrades);
+router.get('/:quizId/my-submission', protect, tenantScope, authorize('student'), getMyQuizSubmission);
 router.get('/:id/eligibility', protect, tenantScope, authorize('student'), checkMonthlyExamEligibility);
 router.get('/submissions/:submissionId', protect, tenantScope, getSubmission); // ownership checked inside
 router.post('/submissions/:submissionId/retry', protect, tenantScope, authorize('student'), getRetryQuiz);

@@ -242,6 +242,20 @@ exports.getQuiz = async (req, res, next) => {
   try {
     const quiz = await Quiz.findOne({ _id: req.params.quizId, ...req.tenantFilter });
     if (!quiz) return res.status(404).json({ message: 'الاختبار غير موجود' });
+    if (req.user.role === 'student') {
+      const previousSubmission = await QuizSubmission.findOne({
+        quizId: quiz._id,
+        studentId: req.user._id,
+        isRetryAttempt: false,
+        ...req.tenantFilter
+      }).select('_id');
+      if (previousSubmission) {
+        return res.status(409).json({
+          message: 'تم تسليم هذا الاختبار بالفعل',
+          submissionId: previousSubmission._id
+        });
+      }
+    }
     if (req.user.role === 'student' && quiz.type === 'lecture') {
       if (!quiz.lectureId || !quiz.courseId) return res.status(410).json({ message: 'هذا اختبار قديم غير مرتبط بمحاضرة' });
       const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: quiz.courseId, lectureId: quiz.lectureId });
@@ -277,6 +291,16 @@ exports.submitQuiz = async (req, res, next) => {
     if (quiz.type !== 'lecture' || !quiz.lectureId || !quiz.courseId) return res.status(400).json({ message: 'هذا الاختبار غير مرتبط بمحاضرة صالحة' });
     const state = await getLectureAccessState({ studentId: req.user._id, tenantFilter: req.tenantFilter, courseId: quiz.courseId, lectureId: quiz.lectureId });
     if (!state.accessible) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
+
+    const previousSubmission = await QuizSubmission.findOne({
+      quizId: quiz._id,
+      studentId: req.user._id,
+      isRetryAttempt: false,
+      ...req.tenantFilter
+    }).select('_id score passed');
+    if (previousSubmission) {
+      return res.json({ data: { submissionId: previousSubmission._id, score: previousSubmission.score, passed: previousSubmission.passed, alreadySubmitted: true } });
+    }
 
     const { score, passed, incorrectQuestionIndexes } = gradeSubmission(quiz, answers);
 
@@ -492,6 +516,22 @@ exports.submitRetry = async (req, res, next) => {
         questions: reviewQuestions
       }
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/v1/quizzes/:quizId/my-submission
+// Used by the lecture player to replace "start exam" after a completed attempt.
+exports.getMyQuizSubmission = async (req, res, next) => {
+  try {
+    const submission = await QuizSubmission.findOne({
+      quizId: req.params.quizId,
+      studentId: req.user._id,
+      isRetryAttempt: false,
+      ...req.tenantFilter
+    }).select('_id score passed submittedAt');
+    res.json({ data: submission || null });
   } catch (err) {
     next(err);
   }

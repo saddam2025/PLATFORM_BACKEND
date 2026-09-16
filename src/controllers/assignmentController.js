@@ -48,6 +48,10 @@ exports.submitAssignment = async (req, res, next) => {
     if (!accessState.accessible) return res.status(403).json({ message: 'لا تملك صلاحية هذه المحاضرة' });
 
     const filter = { courseId: course._id, lectureId: lecture?._id || null, studentId: req.user._id, ...getTenantFilter(req) };
+    const existingAssignment = await Assignment.findOne(filter).select('status');
+    if (existingAssignment && existingAssignment.status !== 'resubmit') {
+      return res.status(409).json({ message: 'تم تسليم الواجب بالفعل وهو بانتظار التقييم' });
+    }
     const update = {
       $set: {
         submissionNote,
@@ -207,8 +211,8 @@ exports.gradeAssignment = async (req, res, next) => {
 
 
 async function getAssignmentGradesForStudent({ studentId, tenantFilter }) {
-  const assignments = await Assignment.find({ studentId, status: { $in: ['graded', 'resubmit'] }, ...tenantFilter }).sort({ gradedAt: -1, updatedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean();
-  return assignments.map((assignment) => ({ _id: assignment._id, grade: assignment.grade, feedback: assignment.feedback, status: assignment.status, lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null, courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null, gradedAt: assignment.gradedAt || assignment.updatedAt }));
+  const assignments = await Assignment.find({ studentId, ...tenantFilter }).sort({ submittedAt: -1, updatedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean();
+  return assignments.map((assignment) => ({ _id: assignment._id, grade: assignment.grade, feedback: assignment.feedback, status: assignment.status, lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null, courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null, submittedAt: assignment.submittedAt, gradedAt: assignment.gradedAt || null }));
 }
 
 exports.getAssignmentGradesForStudent = getAssignmentGradesForStudent;

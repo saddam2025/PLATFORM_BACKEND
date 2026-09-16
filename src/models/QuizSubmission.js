@@ -18,4 +18,11 @@ const quizSubmissionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// A student gets one original attempt per quiz. Retry attempts remain
+// separate records and are intentionally excluded from this uniqueness rule.
+quizSubmissionSchema.index(
+  { tenantId: 1, quizId: 1, studentId: 1 },
+  { unique: true, partialFilterExpression: { isRetryAttempt: false } }
+);
+
 module.exports = mongoose.model('QuizSubmission', quizSubmissionSchema);
