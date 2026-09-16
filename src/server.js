@@ -9,8 +9,6 @@ const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
 const errorHandler = require('./middlewares/errorHandler');
 
-connectDB();
-
 const app = express();
 app.set('trust proxy', 1);
 
@@ -107,6 +105,15 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
-});
+
+// Do not accept requests until MongoDB is connected. Starting the HTTP server
+// first makes a failed or slow database connection look like a working API
+// and turns authentication failures into misleading client-side errors.
+async function startServer() {
+  await connectDB();
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+  });
+}
+
+startServer();
