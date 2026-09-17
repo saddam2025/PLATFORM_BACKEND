@@ -16,7 +16,6 @@ const lectureProgressSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-lectureProgressSchema.index({ studentId: 1, courseId: 1 }, { unique: true });
 lectureProgressSchema.index({ tenantId: 1, studentId: 1, lectureId: 1 }, { unique: true, partialFilterExpression: { lectureId: { $type: 'objectId' } } });
 
 module.exports = mongoose.model('LectureProgress', lectureProgressSchema);

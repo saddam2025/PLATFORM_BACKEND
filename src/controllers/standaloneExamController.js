@@ -6,6 +6,7 @@ const StandaloneExamSubmission = require('../models/StandaloneExamSubmission');
 const { STAGE_ENUM } = require('../constants/stages');
 const gradeSubmission = require('../utils/gradeQuiz');
 const { expiresAtFor, settleExpiredSubmission, settleExpiredStandaloneExamSubmissions } = require('../services/standaloneExamSubmissionService');
+const { hasSafeMathSegments } = require('../utils/validateMathText');
 
 function getTenantFilter(req) {
   return req.tenantFilter || { tenantId: req.user.tenantId };
@@ -36,7 +37,7 @@ function parseQuestions(value) {
     const options = Array.isArray(item.options) ? item.options.map((option) => typeof option === 'string' ? option.trim() : '') : [];
     const correctOptionIndex = Number(item.correctOptionIndex);
     const points = Number(item.points);
-    if (!text || text.length > 1000 || options.length !== 4 || options.some((option) => !option || option.length > 500) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) return null;
+    if (!text || text.length > 1000 || !hasSafeMathSegments(text) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) return null;
     questions.push({ text, options, correctOptionIndex, points });
   }
   return questions;

@@ -105,6 +105,7 @@ exports.getMyAssignment = async (req, res, next) => {
       studentId: req.user._id,
       ...getTenantFilter(req)
     });
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json({ data: assignment || null });
   } catch (err) {
     next(err);

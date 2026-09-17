@@ -8,6 +8,7 @@ const Subscription = require('../models/Subscription');
 const gradeSubmission = require('../utils/gradeQuiz');
 const createNotificationsForAudience = require('../utils/createNotification');
 const mongoose = require('mongoose');
+const { hasSafeMathSegments } = require('../utils/validateMathText');
 
 // OWASP A01/A03-adjacent: never send correctOptionIndex or explanation to
 // the client before a submission exists — a student holding the answer key
@@ -51,15 +52,17 @@ function normalizeQuestions(questions) {
     const options = Array.isArray(question.options) ? question.options.map((option) => typeof option === 'string' ? option.trim() : '') : [];
     const correctOptionIndex = question.correctOptionIndex;
     const points = Number(question.points);
-    if (!text || options.length !== 4 || options.some((option) => !option) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) {
+    if (!text || text.length > 1000 || !hasSafeMathSegments(text) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) {
       return null;
     }
+    const explanation = typeof question.explanation === 'string' ? question.explanation.trim() : '';
+    if (explanation.length > 1000 || !hasSafeMathSegments(explanation)) return null;
     normalized.push({
       text,
       options,
       correctOptionIndex,
       points,
-      explanation: typeof question.explanation === 'string' ? question.explanation.trim() : ''
+      explanation
     });
   }
   return normalized;
