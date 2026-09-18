@@ -159,8 +159,16 @@ exports.listCourses = async (req, res, next) => {
     if (!isOwner) filter.isPublished = true;
 
     if (category) {
-      const categoryDoc = await Category.findOne({ name: category, instructorId: resolvedInstructorId, stage: stage || undefined, tenantId: instructor.tenantId });
-      filter.categoryId = categoryDoc ? categoryDoc._id : null;
+      // The unscoped catalog (`/:instructorId/catalog`) supplies a category
+      // without a stage. Passing `stage: undefined` made this lookup miss
+      // every stage-scoped Category, after which `categoryId: null` forced an
+      // empty course result. Add the stage constraint only for a stage-scoped
+      // catalog request. In the unscoped case, category names can exist at
+      // multiple stages, so retain every matching category ID.
+      const categoryFilter = { name: category, instructorId: resolvedInstructorId, tenantId: instructor.tenantId };
+      if (stage) categoryFilter.stage = stage;
+      const categoryDocs = await Category.find(categoryFilter).select('_id').lean();
+      filter.categoryId = categoryDocs.length ? { $in: categoryDocs.map((categoryDoc) => categoryDoc._id) } : null;
     }
 
     let courses = await Course.find(filter).sort({ order: 1 }).populate('categoryId', 'name');
