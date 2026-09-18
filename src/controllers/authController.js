@@ -191,8 +191,7 @@ exports.login = async (req, res, next) => {
       ? { email: normalizedIdentifier.toLowerCase() }
       : { phone: normalizePhone(normalizedIdentifier) };
     const user = await User.findOne(query).select('+passwordHash');
-    
-    console.log(1, { identifier, password }, query, user);
+
     if (!user) {
       return res.status(401).json(GENERIC_ERROR);
     }

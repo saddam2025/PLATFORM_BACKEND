@@ -405,6 +405,8 @@ exports.getSubmission = async (req, res, next) => {
 // incorrect questions from the original attempt, WITHOUT answer keys.
 exports.getRetryQuiz = async (req, res, next) => {
   try {
+    return res.status(410).json({ message: 'إعادة محاولة الاختبار غير متاحة. يُسمح بمحاولة واحدة فقط.' });
+
     const original = await QuizSubmission.findOne({ _id: req.params.submissionId, ...req.tenantFilter });
     if (!original) return res.status(404).json({ message: 'المحاولة غير موجودة' });
 
@@ -438,6 +440,8 @@ exports.getRetryQuiz = async (req, res, next) => {
 // answers correspond 1:1 with the retry payload's order (originalIndex).
 exports.submitRetry = async (req, res, next) => {
   try {
+    return res.status(410).json({ message: 'إعادة محاولة الاختبار غير متاحة. يُسمح بمحاولة واحدة فقط.' });
+
     const { answers } = req.body;
     const original = await QuizSubmission.findOne({ _id: req.params.submissionId, ...req.tenantFilter });
     if (!original) return res.status(404).json({ message: 'المحاولة غير موجودة' });
