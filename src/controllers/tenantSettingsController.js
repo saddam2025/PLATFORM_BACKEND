@@ -13,6 +13,16 @@ function createHttpError(statusCode, message) {
   return error;
 }
 
+function normalizeEgyptianSupportPhone(value) {
+  let digits = String(value || '').trim().replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('20')) digits = digits.slice(2);
+  else if (digits.startsWith('2') && digits.length >= 11) digits = digits.slice(1);
+  digits = digits.replace(/^0+/, '');
+  return digits ? `+20 ${digits}` : '';
+}
+
 async function getOwnedTenant(req) {
   const { instructorId } = req.params;
   if (!mongoose.isValidObjectId(instructorId)) throw createHttpError(400, 'معرف المدرس غير صالح');
@@ -67,6 +77,7 @@ function getSettingsUpdateData(body) {
     if (adminUpdates[field] !== undefined && (typeof adminUpdates[field] !== 'string' || adminUpdates[field].length > 500)) throw createHttpError(400, 'إعدادات Paymob غير صالحة');
   }
   if (tenantUpdates.name) tenantUpdates.name = tenantUpdates.name.trim();
+  if (tenantUpdates.supportPhone !== undefined) tenantUpdates.supportPhone = normalizeEgyptianSupportPhone(tenantUpdates.supportPhone);
   return { tenantUpdates, adminUpdates };
 }
 
