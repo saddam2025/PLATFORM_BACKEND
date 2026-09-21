@@ -21,6 +21,8 @@ function stripAnswerKey(quiz) {
     questions: plain.questions.map((q) => ({
       _id: q._id,
       text: q.text,
+      stemType: q.stemType || 'text',
+      imageUrl: q.imageUrl || null,
       options: q.options,
       points: q.points
       // correctOptionIndex and explanation intentionally omitted
@@ -48,17 +50,21 @@ function normalizeQuestions(questions) {
   const normalized = [];
   for (const question of questions) {
     if (!question || typeof question !== 'object' || Array.isArray(question)) return null;
+    const stemType = question.stemType === 'image' ? 'image' : 'text';
     const text = typeof question.text === 'string' ? question.text.trim() : '';
+    const imageUrl = typeof question.imageUrl === 'string' ? question.imageUrl.trim() : '';
     const options = Array.isArray(question.options) ? question.options.map((option) => typeof option === 'string' ? option.trim() : '') : [];
     const correctOptionIndex = question.correctOptionIndex;
     const points = Number(question.points);
-    if (!text || text.length > 1000 || !hasSafeMathSegments(text) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) {
+    if ((stemType === 'text' && (!text || text.length > 1000 || !hasSafeMathSegments(text))) || (stemType === 'image' && (!imageUrl || imageUrl.length > 2000)) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) {
       return null;
     }
     const explanation = typeof question.explanation === 'string' ? question.explanation.trim() : '';
     if (explanation.length > 1000 || !hasSafeMathSegments(explanation)) return null;
     normalized.push({
-      text,
+      text: stemType === 'text' ? text : '',
+      stemType,
+      imageUrl: stemType === 'image' ? imageUrl : null,
       options,
       correctOptionIndex,
       points,
@@ -351,6 +357,8 @@ exports.submitQuiz = async (req, res, next) => {
         questions: quiz.questions.map((q, idx) => ({
           _id: q._id,
           text: q.text,
+          stemType: q.stemType || 'text',
+          imageUrl: q.imageUrl || null,
           options: q.options,
           correctOptionIndex: q.correctOptionIndex,
           explanation: q.explanation,
@@ -425,6 +433,8 @@ exports.getRetryQuiz = async (req, res, next) => {
         originalIndex: idx,
         _id: q._id,
         text: q.text,
+        stemType: q.stemType || 'text',
+        imageUrl: q.imageUrl || null,
         options: q.options
       };
     });
@@ -467,6 +477,8 @@ exports.submitRetry = async (req, res, next) => {
       reviewQuestions.push({
         _id: q._id,
         text: q.text,
+        stemType: q.stemType || 'text',
+        imageUrl: q.imageUrl || null,
         options: q.options,
         correctOptionIndex: q.correctOptionIndex,
         explanation: q.explanation,

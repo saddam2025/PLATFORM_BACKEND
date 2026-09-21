@@ -3,7 +3,9 @@ const { STAGE_ENUM } = require('../constants/stages');
 
 const questionSchema = new mongoose.Schema(
   {
-    text: { type: String, required: true },
+    text: { type: String, default: '' },
+    stemType: { type: String, enum: ['text', 'image'], default: 'text' },
+    imageUrl: { type: String, default: null },
     options: {
       type: [String],
       required: true,

@@ -33,12 +33,14 @@ function parseQuestions(value) {
   const questions = [];
   for (const item of value) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const stemType = item.stemType === 'image' ? 'image' : 'text';
     const text = typeof item.text === 'string' ? item.text.trim() : '';
+    const imageUrl = typeof item.imageUrl === 'string' ? item.imageUrl.trim() : '';
     const options = Array.isArray(item.options) ? item.options.map((option) => typeof option === 'string' ? option.trim() : '') : [];
     const correctOptionIndex = Number(item.correctOptionIndex);
     const points = Number(item.points);
-    if (!text || text.length > 1000 || !hasSafeMathSegments(text) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) return null;
-    questions.push({ text, options, correctOptionIndex, points });
+    if ((stemType === 'text' && (!text || text.length > 1000 || !hasSafeMathSegments(text))) || (stemType === 'image' && (!imageUrl || imageUrl.length > 2000)) || options.length !== 4 || options.some((option) => !option || option.length > 500 || !hasSafeMathSegments(option)) || !Number.isInteger(correctOptionIndex) || correctOptionIndex < 0 || correctOptionIndex > 3 || !Number.isFinite(points) || points <= 0) return null;
+    questions.push({ text: stemType === 'text' ? text : '', stemType, imageUrl: stemType === 'image' ? imageUrl : null, options, correctOptionIndex, points });
   }
   return questions;
 }
@@ -187,6 +189,8 @@ function studentExamPayload(exam) {
     questions: exam.questions.map((question) => ({
       id: question._id,
       text: question.text,
+      stemType: question.stemType || 'text',
+      imageUrl: question.imageUrl || null,
       options: question.options,
       points: question.points
     }))

@@ -194,9 +194,8 @@ exports.listCourses = async (req, res, next) => {
         CourseEnrollment.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean(),
         LectureAccess.find({ studentId: requester._id, tenantId: instructor.tenantId, expiresAt: { $gt: now } }).select('courseId').lean()
       ]);
-      // Only a full-course entitlement removes a card from the catalog.
-      // A LectureAccess row whose `courseId` is a lecture id is partial
-      // ownership and must leave the parent course purchasable.
+      // Keep ownership metadata separate from catalog visibility. A student's
+      // active enrollment must not hide a course from the complete catalog.
       const fullyOwnedCourseIds = new Set(enrollments.map((row) => String(row.courseId)));
       const accessIds = new Set(accessRows.map((row) => String(row.courseId)));
       const partialLectureCountByCourse = new Map();
@@ -207,10 +206,9 @@ exports.listCourses = async (req, res, next) => {
         const ownedLectureCount = courseLectures.filter((lecture) => accessIds.has(String(lecture._id))).length;
         if (ownedLectureCount) partialLectureCountByCourse.set(courseId, ownedLectureCount);
       }
-      courses = courses
-        .filter((course) => !fullyOwnedCourseIds.has(String(course._id)))
-        .map((course) => ({
+      courses = courses.map((course) => ({
           ...course.toObject(),
+          owned: fullyOwnedCourseIds.has(String(course._id)),
           partialLectureCount: partialLectureCountByCourse.get(String(course._id)) || 0,
           hasPartialLectureAccess: partialLectureCountByCourse.has(String(course._id))
         }));

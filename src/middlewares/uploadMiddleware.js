@@ -13,11 +13,11 @@ const fileFilter = (req, file, cb) => {
     return cb(new Error('Invalid file type for video field: only video/* MIME types allowed'), false);
   }
 
-  if (field === 'thumbnail') {
+  if (field === 'thumbnail' || field === 'questionImage') {
     // Some browsers label valid PNGs copied from other apps as
     // application/octet-stream. r2Upload validates the actual signature.
     if (file.mimetype.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.originalname || '')) return cb(null, true);
-    return cb(new Error('Invalid file type for thumbnail field: only JPEG, PNG, or WebP images allowed'), false);
+    return cb(new Error(`Invalid file type for ${field} field: only JPEG, PNG, or WebP images allowed`), false);
   }
 
   if (field === 'homework' || field === 'assignment') {
@@ -55,6 +55,14 @@ const uploadGeneral = multer({
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB — thumbnails, homework
 });
+
+const uploadQuestionStemImage = (req, res, next) => {
+  uploadGeneral.single('questionImage')(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Question image must be 10MB or smaller' : err.message || 'Invalid question image upload' });
+    if (!req.file) return res.status(400).json({ message: 'Question image is required' });
+    next();
+  });
+};
 
 const assignmentMulter = multer({
   // Assignment files go straight into memory and are sent to R2 by the
@@ -138,4 +146,4 @@ const uploadBrandingImage = (req, res, next) => {
   });
 };
 
-module.exports = { uploadVideo, uploadGeneral, uploadAssignment, uploadAvatar, uploadBrandingImage, uploadReelVideo };
+module.exports = { uploadVideo, uploadGeneral, uploadQuestionStemImage, uploadAssignment, uploadAvatar, uploadBrandingImage, uploadReelVideo };

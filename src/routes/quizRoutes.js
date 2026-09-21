@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
+const { uploadQuestionStemImage } = require('../middlewares/uploadMiddleware');
+const { uploadQuestionImage } = require('../controllers/questionImageController');
 const {
   getQuiz,
   getMyQuizSubmission,
@@ -25,6 +27,7 @@ const quizAuthoringGate = (req, res, next) => {
 
 authoringRouter.get('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, getCourseQuizForEditing);
 authoringRouter.post('/:instructorId/courses/:courseId/lectures/:lectureId/quiz', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, createCourseQuiz);
+authoringRouter.post('/:instructorId/courses/question-image', protect, tenantScope, authorize('admin', 'assistant'), quizAuthoringGate, uploadQuestionStemImage, uploadQuestionImage);
 
 router.get('/me/exam-grades', protect, tenantScope, authorize('student'), listMyExamGrades);
 router.get('/:quizId/my-submission', protect, tenantScope, authorize('student'), getMyQuizSubmission);

@@ -2,7 +2,9 @@ const mongoose = require('mongoose');
 const { STAGE_ENUM } = require('../constants/stages');
 
 const standaloneExamQuestionSchema = new mongoose.Schema({
-  text: { type: String, required: true, trim: true },
+  text: { type: String, default: '', trim: true },
+  stemType: { type: String, enum: ['text', 'image'], default: 'text' },
+  imageUrl: { type: String, default: null },
   options: {
     type: [String],
     required: true,
