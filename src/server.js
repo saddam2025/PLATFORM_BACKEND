@@ -74,8 +74,10 @@ app.use('/api/v1/quizzes', quizRoutes);
 app.use('/api/v1/instructors', quizAuthoringRoutes);
 app.use('/api/v1/subscriptions', require('./routes/subscriptionRoutes'));
 app.use('/api/v1/courses', require('./routes/lectureAccessRoutes'));
-app.use('/api/v1/instructors', require('./routes/studentProfileRoutes'));
+// Register the static export path before /students/:studentId routes, or
+// "export" is incorrectly consumed as a student ID.
 app.use('/api/v1/instructors', require('./routes/exportRoutes'));
+app.use('/api/v1/instructors', require('./routes/studentProfileRoutes'));
 app.use('/api/v1', require('./routes/reelRoutes')); // reelRoutes defines its own /instructors/... and /reels/... prefixes internally
 app.use('/api/v1/notifications', require('./routes/notificationRoutes'));
 app.use('/api/v1/instructors', require('./routes/leaderboardRoutes'));
