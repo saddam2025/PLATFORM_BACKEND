@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize, requirePermission } = require('../middlewares/authMiddleware');
 const tenantScope = require('../middlewares/tenantScope.middleware');
-const { generateScratchCards, listScratchCards, redeemScratchCard } = require('../controllers/scratchCardController');
+const { generateScratchCards, listScratchCards, redeemScratchCard, deleteScratchCard, deleteScratchCardBatch, deleteAllScratchCards } = require('../controllers/scratchCardController');
 
 const gateGenerate = (req, res, next) => {
   if (req.user.role === 'admin') return next();
@@ -18,6 +18,9 @@ router.post(
   generateScratchCards
 );
 router.get('/instructors/:instructorId/scratchcards', protect, tenantScope, authorize('admin', 'assistant'), gateGenerate, listScratchCards);
+router.delete('/instructors/:instructorId/scratchcards/:cardId', protect, tenantScope, authorize('admin', 'assistant'), gateGenerate, deleteScratchCard);
+router.delete('/instructors/:instructorId/scratchcard-batches', protect, tenantScope, authorize('admin', 'assistant'), gateGenerate, deleteScratchCardBatch);
+router.delete('/instructors/:instructorId/scratchcards', protect, tenantScope, authorize('admin', 'assistant'), gateGenerate, deleteAllScratchCards);
 
 router.post('/scratchcards/redeem', protect, tenantScope, authorize('student'), redeemScratchCard);
 

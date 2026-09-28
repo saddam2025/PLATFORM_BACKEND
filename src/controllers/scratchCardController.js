@@ -20,6 +20,11 @@ function hasTenant(req) {
   return req.user.role === 'super_admin' || mongoose.isValidObjectId(req.user.tenantId);
 }
 
+async function getManagedGeneratorIds(req, instructorId) {
+  const assistants = await User.find({ role: 'assistant', instructorId, ...getTenantFilter(req) }).distinct('_id');
+  return [new mongoose.Types.ObjectId(instructorId), ...assistants];
+}
+
 // POST /api/v1/instructors/:instructorId/scratchcards/generate
 // Plaintext codes are returned exactly once and only their hashes are stored.
 exports.generateScratchCards = async (req, res, next) => {
@@ -85,17 +90,18 @@ exports.listScratchCards = async (req, res, next) => {
     const { instructorId } = req.params;
     const { batchId, status } = req.query;
     if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
-    if (String(req.user._id) !== String(instructorId)) return res.status(403).json({ message: 'غير مصرح لك بعرض بطاقات هذا الحساب' });
+    if (!isOwnerOfInstructor(req.user, instructorId)) return res.status(403).json({ message: 'غير مصرح لك بعرض بطاقات هذا الحساب' });
     if (batchId !== undefined && (typeof batchId !== 'string' || !batchId.trim() || batchId.length > 100)) return res.status(400).json({ message: 'معرف الدفعة غير صالح' });
     if (status !== undefined && !['redeemed', 'available'].includes(status)) return res.status(400).json({ message: 'حالة البطاقة غير صالحة' });
-    const filter = { ...getTenantFilter(req) };
+    const generatorIds = await getManagedGeneratorIds(req, instructorId);
+    const filter = { ...getTenantFilter(req), generatedBy: { $in: generatorIds } };
     if (batchId) filter.batchId = batchId.trim();
     if (status === 'redeemed') filter.isRedeemed = true;
     if (status === 'available') filter.isRedeemed = false;
     const [cards, batches] = await Promise.all([
       ScratchCard.find(filter).select('-code_hash').populate('redeemedBy', 'name').sort({ createdAt: -1 }).limit(1000),
       ScratchCard.aggregate([
-        { $match: { ...getTenantFilter(req), ...(batchId ? { batchId: batchId.trim() } : {}) } },
+        { $match: { ...getTenantFilter(req), generatedBy: { $in: generatorIds }, ...(batchId ? { batchId: batchId.trim() } : {}) } },
         { $group: { _id: '$batchId', total: { $sum: 1 }, redeemed: { $sum: { $cond: ['$isRedeemed', 1, 0] } }, value: { $first: '$value' }, createdAt: { $min: '$createdAt' } } },
         { $sort: { createdAt: -1 } }
       ])
@@ -104,6 +110,51 @@ exports.listScratchCards = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+exports.deleteScratchCard = async (req, res, next) => {
+  try {
+    const { instructorId, cardId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId) || !mongoose.isValidObjectId(cardId)) {
+      return res.status(400).json({ message: 'معرف البطاقة غير صالح' });
+    }
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف بطاقات هذا الحساب' });
+    }
+    const generatorIds = await getManagedGeneratorIds(req, instructorId);
+    const deleted = await ScratchCard.findOneAndDelete({ _id: cardId, generatedBy: { $in: generatorIds }, ...getTenantFilter(req) });
+    if (!deleted) return res.status(404).json({ message: 'البطاقة غير موجودة' });
+    return res.json({ data: { deleted: 1 } });
+  } catch (err) { return next(err); }
+};
+
+exports.deleteScratchCardBatch = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    const { batchId } = req.body || {};
+    if (!mongoose.isValidObjectId(instructorId) || typeof batchId !== 'string' || !batchId.trim()) {
+      return res.status(400).json({ message: 'بيانات الدفعة غير صالحة' });
+    }
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف بطاقات هذا الحساب' });
+    }
+    const generatorIds = await getManagedGeneratorIds(req, instructorId);
+    const result = await ScratchCard.deleteMany({ generatedBy: { $in: generatorIds }, batchId: batchId.trim(), ...getTenantFilter(req) });
+    return res.json({ data: { deleted: result.deletedCount || 0 } });
+  } catch (err) { return next(err); }
+};
+
+exports.deleteAllScratchCards = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف بطاقات هذا الحساب' });
+    }
+    const generatorIds = await getManagedGeneratorIds(req, instructorId);
+    const result = await ScratchCard.deleteMany({ generatedBy: { $in: generatorIds }, ...getTenantFilter(req) });
+    return res.json({ data: { deleted: result.deletedCount || 0 } });
+  } catch (err) { return next(err); }
 };
 
 // POST /api/v1/scratchcards/redeem

@@ -1,6 +1,13 @@
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 
+function isOwnerOfInstructor(user, instructorId) {
+  if (!user) return false;
+  if (user.role === 'admin') return String(user._id) === String(instructorId);
+  if (user.role === 'assistant') return String(user.instructorId) === String(instructorId);
+  return false;
+}
+
 function csvEscape(value) {
   const str = value === null || value === undefined ? '' : String(value);
   if (/[",\n]/.test(str)) {
@@ -13,7 +20,7 @@ exports.exportStudents = async (req, res, next) => {
   try {
     const { instructorId } = req.params;
 
-    if (String(req.user._id) !== String(instructorId)) {
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
       return res.status(403).json({ message: 'غير مصرح لك بتصدير بيانات هذا الحساب' });
     }
 
@@ -42,11 +49,13 @@ exports.exportStudents = async (req, res, next) => {
       return row.map(csvEscape).join(',');
     });
 
-    const csvContent = [headerRow, ...dataRows].join('\n');
+    // UTF-8 BOM makes Arabic render correctly in Excel; CRLF is broadly
+    // compatible with desktop spreadsheet applications.
+    const csvContent = `\uFEFF${[headerRow, ...dataRows].join('\r\n')}`;
 
     const dateStr = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="students-${dateStr}.csv"`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="students-${dateStr}.csv"; filename*=UTF-8''students-${dateStr}.csv`);
     res.status(200).send(csvContent);
   } catch (err) {
     next(err);

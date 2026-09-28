@@ -153,6 +153,7 @@ exports.listAccessCodeBatches = async (req, res, next) => {
           _id: { batchId: '$batchId', type: '$type', courseId: '$courseId', lectureId: '$lectureId' },
           total: { $sum: 1 },
           redeemed: { $sum: { $cond: ['$isRedeemed', 1, 0] } },
+          codes: { $push: { _id: '$_id', isRedeemed: '$isRedeemed', redeemedAt: '$redeemedAt' } },
           createdAt: { $min: '$createdAt' },
           updatedAt: { $max: '$updatedAt' }
         }
@@ -170,4 +171,57 @@ exports.listAccessCodeBatches = async (req, res, next) => {
     ]);
     res.json({ data: batches });
   } catch (err) { next(err); }
+};
+
+// Deletes are scoped to the instructor and tenant. Only hashes/metadata are
+// returned to clients; deleting a code never reveals or recreates plaintext.
+exports.deleteAccessCode = async (req, res, next) => {
+  try {
+    const { instructorId, codeId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId) || !mongoose.isValidObjectId(codeId)) {
+      return res.status(400).json({ message: 'معرف الكود غير صالح' });
+    }
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف أكواد هذا الحساب' });
+    }
+    const deleted = await AccessCode.findOneAndDelete({ _id: codeId, instructorId, ...req.tenantFilter });
+    if (!deleted) return res.status(404).json({ message: 'الكود غير موجود' });
+    return res.json({ data: { deleted: 1 } });
+  } catch (err) { return next(err); }
+};
+
+exports.deleteAccessCodeBatch = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    const { batchId, type, courseId, lectureId } = req.body || {};
+    if (!mongoose.isValidObjectId(instructorId) || typeof batchId !== 'string' || !batchId.trim()) {
+      return res.status(400).json({ message: 'بيانات الدفعة غير صالحة' });
+    }
+    if ((type && !['full_course', 'single_lecture'].includes(type))
+      || (courseId && !mongoose.isValidObjectId(courseId))
+      || (lectureId && !mongoose.isValidObjectId(lectureId))) {
+      return res.status(400).json({ message: 'بيانات الدفعة غير صالحة' });
+    }
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف أكواد هذا الحساب' });
+    }
+    const filter = { instructorId, batchId: batchId.trim(), ...req.tenantFilter };
+    if (type) filter.type = type;
+    if (courseId && mongoose.isValidObjectId(courseId)) filter.courseId = courseId;
+    if (lectureId && mongoose.isValidObjectId(lectureId)) filter.lectureId = lectureId;
+    const result = await AccessCode.deleteMany(filter);
+    return res.json({ data: { deleted: result.deletedCount || 0 } });
+  } catch (err) { return next(err); }
+};
+
+exports.deleteAllAccessCodes = async (req, res, next) => {
+  try {
+    const { instructorId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId)) return res.status(400).json({ message: 'معرف المدرس غير صالح' });
+    if (!isOwnerOfInstructor(req.user, instructorId)) {
+      return res.status(403).json({ message: 'غير مصرح لك بحذف أكواد هذا الحساب' });
+    }
+    const result = await AccessCode.deleteMany({ instructorId, ...req.tenantFilter });
+    return res.json({ data: { deleted: result.deletedCount || 0 } });
+  } catch (err) { return next(err); }
 };
