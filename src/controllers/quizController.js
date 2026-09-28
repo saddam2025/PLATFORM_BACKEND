@@ -1,4 +1,5 @@
 const Quiz = require('../models/Quiz');
+const User = require('../models/User');
 const QuizSubmission = require('../models/QuizSubmission');
 const LectureProgress = require('../models/LectureProgress');
 const Course = require('../models/Course');
@@ -332,6 +333,19 @@ exports.submitQuiz = async (req, res, next) => {
       relatedId: submission._id,
       recipientIds: req.user._id
     });
+
+    const parents = await User.find({ role: 'parent', childId: req.user._id, ...req.tenantFilter }).select('_id').lean();
+    if (parents.length) {
+      await createNotificationsForAudience({
+        tenantId: req.user.tenantId,
+        instructorId: quiz.instructorId,
+        type: 'exam_result',
+        title: 'ظهرت نتيجة اختبار ابنك',
+        body: `درجة الطالب في الاختبار: ${score}%`,
+        relatedId: submission._id,
+        recipientIds: parents.map((parent) => parent._id)
+      });
+    }
 
     // Lecture-progression gating (feature #6): only applies when the quiz is
     // tied to a course. The actual "is the NEXT lecture unlocked" read

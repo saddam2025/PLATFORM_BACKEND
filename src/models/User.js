@@ -23,9 +23,11 @@ const userSchema = new mongoose.Schema(
       index: true
     },
     phone: { type: String, default: '' },
+    guardianPhone: { type: String, default: '' },
     fatherPhone: { type: String, default: '' },
     motherPhone: { type: String, default: '' },
     passwordHash: { type: String, required: true, select: true },
+    passwordChangedAt: { type: Date, default: null, select: false },
     // TOTP material is intentionally opt-in for queries. It is only selected
     // inside the MFA controller, never in profile or normal auth responses.
     mfaEnabled: { type: Boolean, default: false },

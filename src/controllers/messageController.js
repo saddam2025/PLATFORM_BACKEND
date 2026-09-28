@@ -1,5 +1,6 @@
 const Message = require('../models/Message');
 const User = require('../models/User');
+const createNotificationsForAudience = require('../utils/createNotification');
 
 function parsePagination(query) {
   const parsePositiveInteger = (value, name, defaultValue, max) => {
@@ -71,6 +72,18 @@ exports.sendMessage = async (req, res, next) => {
       studentId,
       body
     });
+
+    if (recipient.role === 'parent' && ['assistant', 'admin'].includes(req.user.role)) {
+      await createNotificationsForAudience({
+        tenantId: req.user.tenantId,
+        instructorId: student.instructorId,
+        type: 'message',
+        title: 'رسالة جديدة من فريق الدعم',
+        body: body.length > 120 ? `${body.slice(0, 117)}...` : body,
+        relatedId: message._id,
+        recipientIds: recipient._id
+      });
+    }
 
     res.status(201).json({ data: message });
   } catch (err) {

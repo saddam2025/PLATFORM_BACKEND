@@ -27,7 +27,7 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized, token failed' });
     }
 
-    const user = await User.findById(decoded.id).select('-passwordHash');
+    const user = await User.findById(decoded.id).select('-passwordHash +passwordChangedAt');
 
     if (!user) {
       return res.status(401).json({ message: 'Not authorized, user not found' });
@@ -37,6 +37,10 @@ const protect = async (req, res, next) => {
       // Assistant accounts created via invite but not yet activated
       // (password not set) must never be allowed to authenticate.
       return res.status(401).json({ message: 'Account not active' });
+    }
+
+    if (user.passwordChangedAt && Number(decoded.passwordChangedAt) !== user.passwordChangedAt.getTime()) {
+      return res.status(401).json({ message: 'Not authorized, token failed' });
     }
 
     req.user = user;

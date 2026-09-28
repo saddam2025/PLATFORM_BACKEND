@@ -11,6 +11,7 @@ const LectureAccess = require('../models/LectureAccess');
 const CourseEnrollment = require('../models/CourseEnrollment');
 const mongoose = require('mongoose');
 const { settleExpiredStandaloneExamSubmissions } = require('../services/standaloneExamSubmissionService');
+const { hasValidPassword, PASSWORD_POLICY_MESSAGE } = require('../utils/passwordPolicy');
 
 function canViewInstructorStudents(user, instructorId) {
   if (user.role === 'admin') return String(user._id) === String(instructorId);
@@ -23,6 +24,53 @@ function paginationFromQuery(query) {
   const limit = Math.min(100, Math.max(1, Number.parseInt(query.limit, 10) || 20));
   return { page, limit };
 }
+
+// PATCH /api/v1/instructors/:instructorId/students/:studentId/reset-password
+exports.resetStudentPassword = async (req, res, next) => {
+  try {
+    const { instructorId, studentId } = req.params;
+    if (!mongoose.isValidObjectId(instructorId) || !mongoose.isValidObjectId(studentId)) {
+      return res.status(404).json({ message: 'الطالب غير موجود' });
+    }
+
+    const callerInstructorId = req.user.role === 'admin' ? req.user._id : req.user.instructorId;
+    if (!callerInstructorId || String(callerInstructorId) !== String(instructorId)) {
+      return res.status(404).json({ message: 'الطالب غير موجود' });
+    }
+
+    const student = await User.findOne({
+      _id: studentId,
+      instructorId,
+      role: 'student',
+      ...req.tenantFilter
+    });
+    if (!student) return res.status(404).json({ message: 'الطالب غير موجود' });
+
+    const bodyKeys = Object.keys(req.body || {});
+    if (bodyKeys.some((key) => key !== 'newPassword') || !hasValidPassword(req.body?.newPassword)) {
+      return res.status(400).json({ message: PASSWORD_POLICY_MESSAGE });
+    }
+
+    // Match registration exactly: assign the candidate to passwordHash, then
+    // User's pre-save hook runs bcrypt.genSalt(12) and bcrypt.hash(..., salt)
+    // before MongoDB writes the document. The plaintext is never persisted.
+    student.passwordHash = req.body.newPassword;
+    student.passwordChangedAt = new Date();
+    await student.save();
+
+    // Keep an audit record in the server log without including credentials.
+    console.info(JSON.stringify({
+      event: 'student_password_reset',
+      actorId: String(req.user._id),
+      studentId: String(student._id),
+      at: new Date().toISOString()
+    }));
+
+    return res.json({ message: 'تم تغيير كلمة مرور الطالب بنجاح' });
+  } catch (err) {
+    return next(err);
+  }
+};
 
 // GET /api/v1/instructors/:instructorId/students?page=&limit=&search=
 exports.listInstructorStudents = async (req, res, next) => {
@@ -37,7 +85,7 @@ exports.listInstructorStudents = async (req, res, next) => {
     if (search) filter.name = { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
 
     const [students, total] = await Promise.all([
-      User.find(filter).select('name email phone fatherPhone motherPhone stage track avatarUrl createdAt').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+      User.find(filter).select('name email phone guardianPhone fatherPhone motherPhone stage track avatarUrl createdAt').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
       User.countDocuments(filter)
     ]);
     return res.json({ data: students, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
@@ -56,15 +104,16 @@ exports.getStudentDirectoryDetail = async (req, res, next) => {
     // No sensitive fields are selected. The response is deliberately built
     // from an allowlist rather than serializing the full User document.
     const student = await User.findOne({ _id: studentId, instructorId, role: 'student', ...req.tenantFilter })
-      .select('name email phone fatherPhone motherPhone stage track avatarUrl createdAt');
+      .select('name email phone guardianPhone fatherPhone motherPhone stage track avatarUrl createdAt');
     if (!student) return res.status(404).json({ message: 'الطالب غير موجود' });
 
-    const [lectureAccess, enrollments] = await Promise.all([
+    const [lectureAccess, enrollments, linkedParent] = await Promise.all([
       LectureAccess.find({ studentId: student._id, ...req.tenantFilter }).sort({ purchasedAt: -1 }).lean(),
       CourseEnrollment.find({ studentId: student._id, ...req.tenantFilter })
         .populate({ path: 'courseId', match: req.tenantFilter, select: 'title_ar title_en' })
         .sort({ purchasedAt: -1 })
-        .lean()
+        .lean(),
+      User.exists({ role: 'parent', childId: student._id, instructorId, ...req.tenantFilter })
     ]);
 
     // Legacy LectureAccess rows may store either a course id (full access)
@@ -84,8 +133,10 @@ exports.getStudentDirectoryDetail = async (req, res, next) => {
           name: student.name,
           email: student.email,
           phone: student.phone,
+          guardianPhone: student.guardianPhone,
           fatherPhone: student.fatherPhone,
           motherPhone: student.motherPhone,
+          parentLinked: Boolean(linkedParent),
           stage: student.stage,
           track: student.track,
           avatarUrl: student.avatarUrl || null,
@@ -149,11 +200,12 @@ exports.getStudentProfile = async (req, res, next) => {
     // than sequential awaits, since none of them depend on each other's result.
     const standaloneFilter = { studentId, ...req.tenantFilter };
     await settleExpiredStandaloneExamSubmissions({ filter: standaloneFilter });
-    const [quizSubmissions, videoProgress, assignments, standaloneExamSubmissions] = await Promise.all([
+    const [quizSubmissions, videoProgress, assignments, standaloneExamSubmissions, linkedParent] = await Promise.all([
       QuizSubmission.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean(),
       VideoProgress.find({ studentId, ...req.tenantFilter }).lean(),
-      Assignment.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).lean(),
-      StandaloneExamSubmission.find(standaloneFilter).sort({ startedAt: -1 }).lean()
+      Assignment.find({ studentId, ...req.tenantFilter }).sort({ submittedAt: -1 }).populate('courseId', 'title_ar title_en').populate('lectureId', 'title_ar title_en').lean(),
+      StandaloneExamSubmission.find(standaloneFilter).sort({ startedAt: -1 }).lean(),
+      User.exists({ role: 'parent', childId: student._id, instructorId, ...req.tenantFilter })
     ]);
 
     const standaloneExamIds = [...new Set(standaloneExamSubmissions.map((submission) => String(submission.examId)))];
@@ -170,6 +222,12 @@ exports.getStudentProfile = async (req, res, next) => {
     const quizzes = await Quiz.find({ _id: { $in: quizIds }, ...req.tenantFilter }).lean();
     const quizMap = new Map(quizzes.map((q) => [String(q._id), q]));
 
+    const lectureIds = [...new Set(quizzes.filter((quiz) => quiz.lectureId).map((quiz) => String(quiz.lectureId)))];
+    const quizLectures = lectureIds.length
+      ? await Lecture.find({ _id: { $in: lectureIds }, ...req.tenantFilter }).select('title_ar title_en').lean()
+      : [];
+    const quizLectureMap = new Map(quizLectures.map((lecture) => [String(lecture._id), lecture]));
+
     const courseIds = [
       ...new Set(
         quizzes.filter((q) => q.courseId).map((q) => String(q.courseId))
@@ -181,8 +239,10 @@ exports.getStudentProfile = async (req, res, next) => {
     const enrichedSubmissions = quizSubmissions.map((sub) => {
       const quiz = quizMap.get(String(sub.quizId));
       const course = quiz && quiz.courseId ? courseMap.get(String(quiz.courseId)) : null;
+      const lecture = quiz?.lectureId ? quizLectureMap.get(String(quiz.lectureId)) : null;
       return {
         ...sub,
+        quizTitle: quiz?.title || lecture?.title_ar || lecture?.title_en || null,
         quizType: quiz ? quiz.type : null,
         courseTitle: course ? course.title_ar : quiz && quiz.type === 'monthly_exam' ? 'اختبار الشهر' : null
       };
@@ -205,11 +265,16 @@ exports.getStudentProfile = async (req, res, next) => {
           name: student.name,
           email: student.email,
           phone: student.phone,
+          parentLinked: Boolean(linkedParent),
           joinedAt: student.createdAt
         },
         quizSubmissions: enrichedSubmissions,
         videoProgress: enrichedProgress,
-        assignments,
+        assignments: assignments.map((assignment) => ({
+          ...assignment,
+          courseTitle: assignment.courseId?.title_ar || assignment.courseId?.title_en || null,
+          lectureTitle: assignment.lectureId?.title_ar || assignment.lectureId?.title_en || null
+        })),
         standaloneExamSubmissions: standaloneExamSubmissions.map((submission) => ({
           ...submission,
           exam: standaloneExamById.get(String(submission.examId)) || null

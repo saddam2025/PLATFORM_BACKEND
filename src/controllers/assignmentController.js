@@ -3,6 +3,7 @@ const Assignment = require('../models/Assignment');
 const Course = require('../models/Course');
 const Lecture = require('../models/Lecture');
 const LectureProgress = require('../models/LectureProgress');
+const User = require('../models/User');
 const { getLectureAccessState } = require('./lectureAccessController');
 const createNotificationsForAudience = require('../utils/createNotification');
 const { uploadAssignmentFile } = require('../utils/r2Upload');
@@ -80,6 +81,26 @@ exports.submitAssignment = async (req, res, next) => {
       { $set: { homeworkCompleted: true }, $setOnInsert: { tenantId: course.tenantId, studentId: req.user._id, courseId: course._id, lectureId: lecture._id } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+
+    const graders = await User.find({
+      tenantId: course.tenantId,
+      instructorId: course.instructorId,
+      role: 'assistant',
+      isActive: true,
+      deletedAt: null,
+      permissions: 'can_grade_exams'
+    }).select('_id').lean();
+    if (graders.length) {
+      await createNotificationsForAudience({
+        tenantId: course.tenantId,
+        instructorId: course.instructorId,
+        type: 'assignment_submitted',
+        title: 'واجب جديد بانتظار التصحيح',
+        body: `سلّم ${req.user.name || 'طالب'} واجبًا جديدًا في ${course.title_ar || 'أحد الكورسات'}.`,
+        relatedId: assignment._id,
+        recipientIds: graders.map((grader) => grader._id)
+      });
+    }
 
     res.status(201).json({ data: assignment });
   } catch (err) {
@@ -203,6 +224,21 @@ exports.gradeAssignment = async (req, res, next) => {
       relatedId: assignment._id,
       recipientIds: assignment.studentId
     });
+
+    const parents = await User.find({ role: 'parent', childId: assignment.studentId, ...getTenantFilter(req) }).select('_id').lean();
+    if (parents.length) {
+      await createNotificationsForAudience({
+        tenantId: assignment.tenantId,
+        instructorId: assignment.courseId.instructorId,
+        type: 'assignment_graded',
+        title: status === 'graded' ? 'ظهرت درجة الواجب' : 'الواجب يحتاج إعادة تسليم',
+        body: status === 'graded'
+          ? `تم تصحيح واجب ${assignment.courseId.title_ar}. درجة الطالب: ${assignment.grade}`
+          : `واجب الطالب في ${assignment.courseId.title_ar} يحتاج إلى إعادة تسليم بعد مراجعة الملاحظات.`,
+        relatedId: assignment._id,
+        recipientIds: parents.map((parent) => parent._id)
+      });
+    }
 
     res.json({ data: assignment });
   } catch (err) {

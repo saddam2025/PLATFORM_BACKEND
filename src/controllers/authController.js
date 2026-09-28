@@ -19,8 +19,12 @@ function normalizePhone(value) {
     .replace(/[^\d+]/g, '');
 }
 
-function generateToken(userId) {
-  return jwt.sign({ id: userId, type: 'session' }, process.env.JWT_SECRET, {
+function generateToken(userId, passwordChangedAt = null) {
+  return jwt.sign({
+    id: userId,
+    type: 'session',
+    passwordChangedAt: passwordChangedAt ? new Date(passwordChangedAt).getTime() : null
+  }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   });
 }
@@ -61,7 +65,8 @@ function createPendingLoginToken(userId) {
 exports.register = async (req, res, next) => {
   let session;
   try {
-    const { name, email, password, role, instructorId, parentAccessCode, stage, track, phone, fatherPhone, motherPhone } = req.body;
+    const { name, email, password, role, instructorId, parentAccessCode, stage, track, phone, guardianPhone, fatherPhone, motherPhone } = req.body;
+    const hasGuardianPhone = Boolean(String(guardianPhone || '').trim());
 
     if (!['student', 'parent'].includes(role)) {
       return res.status(400).json({ message: 'نوع الحساب غير مسموح به عبر التسجيل الذاتي' });
@@ -93,8 +98,9 @@ exports.register = async (req, res, next) => {
       if (!TRACK_STAGE_IDS.has(stage) && track != null && track !== '') {
         return res.status(400).json({ message: 'الشعبة غير متاحة لهذه المرحلة' });
       }
-      if (!phone || !String(phone).trim() || !fatherPhone || !String(fatherPhone).trim() || !motherPhone || !String(motherPhone).trim()) {
-        return res.status(400).json({ message: 'أرقام هاتف الطالب والأب والأم مطلوبة' });
+      const hasLegacyGuardianPhones = fatherPhone && String(fatherPhone).trim() && motherPhone && String(motherPhone).trim();
+      if (!phone || !String(phone).trim() || !hasGuardianPhone && !hasLegacyGuardianPhones) {
+        return res.status(400).json({ message: 'رقم هاتف الطالب ورقم ولي الأمر مطلوبان' });
       }
     }
 
@@ -149,8 +155,9 @@ exports.register = async (req, res, next) => {
       stage: role === 'student' ? stage : null,
       track: role === 'student' && TRACK_STAGE_IDS.has(stage) ? track : null,
       phone: role === 'student' ? normalizePhone(phone) : '',
-      fatherPhone: role === 'student' ? String(fatherPhone).trim() : '',
-      motherPhone: role === 'student' ? String(motherPhone).trim() : ''
+      guardianPhone: role === 'student' && hasGuardianPhone ? normalizePhone(guardianPhone) : '',
+      fatherPhone: role === 'student' && !hasGuardianPhone ? String(fatherPhone || '').trim() : '',
+      motherPhone: role === 'student' && !hasGuardianPhone ? String(motherPhone || '').trim() : ''
     });
 
     // Keep the persisted account and its required session credential atomic.
@@ -160,7 +167,7 @@ exports.register = async (req, res, next) => {
     session = await mongoose.startSession();
     session.startTransaction();
     await user.save({ session });
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.passwordChangedAt);
     await session.commitTransaction();
     res.status(201).json({ token, user: user.toJSON() });
   } catch (err) {
@@ -190,7 +197,7 @@ exports.login = async (req, res, next) => {
     const query = isEmail
       ? { email: normalizedIdentifier.toLowerCase() }
       : { phone: normalizePhone(normalizedIdentifier) };
-    const user = await User.findOne(query).select('+passwordHash');
+    const user = await User.findOne(query).select('+passwordHash +passwordChangedAt');
 
     if (!user) {
       return res.status(401).json(GENERIC_ERROR);
@@ -213,7 +220,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.passwordChangedAt);
     res.json({ token, user: user.toJSON() });
   } catch (err) {
     next(err);
@@ -314,7 +321,7 @@ exports.verifyMfaLogin = async (req, res, next) => {
     }
     if (pending.type !== 'mfa_pending' || !pending.id) return res.status(401).json(GENERIC_ERROR);
 
-    const user = await User.findById(pending.id).select('+mfaSecret +mfaBackupCodes');
+    const user = await User.findById(pending.id).select('+mfaSecret +mfaBackupCodes +passwordChangedAt');
     if (!user || !user.isActive || user.deletedAt || user.inviteStatus === 'pending' || !isMfaEligible(user) || !user.mfaEnabled || !user.mfaSecret) {
       return res.status(401).json(GENERIC_ERROR);
     }
@@ -335,7 +342,7 @@ exports.verifyMfaLogin = async (req, res, next) => {
     }
     if (!valid) return res.status(401).json(GENERIC_ERROR);
 
-    return res.json({ token: generateToken(user._id), user: user.toJSON() });
+    return res.json({ token: generateToken(user._id, user.passwordChangedAt), user: user.toJSON() });
   } catch (err) {
     next(err);
   }
@@ -386,7 +393,7 @@ exports.acceptInvite = async (req, res, next) => {
     user.inviteToken = undefined;
     await user.save();
 
-    const jwtToken = generateToken(user._id);
+    const jwtToken = generateToken(user._id, user.passwordChangedAt);
     res.json({ token: jwtToken, user: user.toJSON() });
   } catch (err) {
     next(err);
