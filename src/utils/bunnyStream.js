@@ -2,7 +2,9 @@ const axios = require('axios');
 const crypto = require('crypto');
 
 const BUNNY_API_BASE = 'https://video.bunnycdn.com';
-const DIRECT_UPLOAD_TTL_SECONDS = 15 * 60;
+// Large videos can take much longer than a short-lived upload token allows.
+// This TTL is shared by Bunny's TUS authorization and the pending DB record.
+const DIRECT_UPLOAD_TTL_SECONDS = 24 * 60 * 60;
 // Bunny's post-upload states: Uploaded, Processing, Transcoding, Finished,
 // and ResolutionFinished. Created and error states are intentionally excluded.
 const CONFIRMABLE_VIDEO_STATUSES = new Set([1, 2, 3, 4, 5]);
