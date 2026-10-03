@@ -41,13 +41,11 @@ const fileFilter = (req, file, cb) => {
   return cb(new Error(`Unexpected upload field: ${field}`), false);
 };
 
-// Per-field size limits are enforced at the multer instance level via a
-// shared max (Multer doesn't support per-field limits natively), so the
-// video field gets its own dedicated instance with a higher ceiling.
+// Video uploads have no application-level file size cap. Other upload
+// instances below retain their own limits for images and documents.
 const uploadVideo = multer({
   storage,
-  fileFilter,
-  limits: { fileSize: 500 * 1024 * 1024 } // 500MB
+  fileFilter
 });
 
 const uploadGeneral = multer({
@@ -90,7 +88,6 @@ const reelMulter = multer({
     if (file.fieldname === 'video' && ['video/mp4', 'video/webm'].includes(file.mimetype)) return cb(null, true);
     return cb(new Error('Reel video must be an MP4 or WebM file'), false);
   },
-  limits: { fileSize: 500 * 1024 * 1024 }
 });
 
 async function hasValidReelSignature(file) {
@@ -102,7 +99,7 @@ async function hasValidReelSignature(file) {
 
 const uploadReelVideo = (req, res, next) => {
   reelMulter.single('video')(req, res, async (err) => {
-    if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Reel video must be 500MB or smaller' : err.message || 'Invalid reel upload' });
+    if (err) return res.status(400).json({ message: err.message || 'Invalid reel upload' });
     if (!req.file) return res.status(400).json({ message: 'ملف الفيديو مطلوب' });
     try {
       if (!await hasValidReelSignature(req.file)) {
