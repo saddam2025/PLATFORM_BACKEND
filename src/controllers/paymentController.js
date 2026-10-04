@@ -104,7 +104,7 @@ exports.checkoutCourseWithWallet = async (req, res, next) => {
     if (Number(course.price) <= 0) return res.status(400).json({ message: 'استخدم الاشتراك المجاني لهذه الدورة' });
     let result;
     await session.withTransaction(async () => {
-      const existing = await CourseEnrollment.findOne({ tenantId: req.user.tenantId, studentId: req.user._id, courseId: course._id }).session(session);
+      const existing = await CourseEnrollment.findOne({ tenantId: req.user.tenantId, studentId: req.user._id, courseId: course._id, expiresAt: { $gt: new Date() } }).session(session);
       if (existing) throw Object.assign(new Error('أنت مشترك بالفعل في هذه الدورة'), { statusCode: 409 });
       const student = await User.findOneAndUpdate(
         { _id: req.user._id, ...req.tenantFilter, walletBalance: { $gte: Number(course.price) } },
@@ -211,6 +211,13 @@ exports.startCourseCheckout = async (req, res, next) => {
   try {
     const course = await findCourseForCheckout(req);
     if (Number(course.price) <= 0) return res.status(400).json({ message: 'هذه الدورة مجانية' });
+    const activeEnrollment = await CourseEnrollment.exists({
+      tenantId: req.user.tenantId,
+      studentId: req.user._id,
+      courseId: course._id,
+      expiresAt: { $gt: new Date() }
+    });
+    if (activeEnrollment) return res.status(409).json({ message: 'أنت مشترك بالفعل في هذه الدورة' });
     return startPaymobCheckout(req, res, next, { course, price: Number(course.price) });
   } catch (err) { return next(err); }
 };

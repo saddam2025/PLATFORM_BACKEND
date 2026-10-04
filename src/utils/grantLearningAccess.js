@@ -4,11 +4,23 @@ const LectureAccess = require('../models/LectureAccess');
 function expiry(days) { const value = new Date(); value.setDate(value.getDate() + Number(days || 10)); return value; }
 
 async function grantCourseEnrollment({ course, studentId, tenantId, source, session = null }) {
-  return CourseEnrollment.findOneAndUpdate(
-    { tenantId, studentId, courseId: course._id },
-    { $setOnInsert: { tenantId, studentId, courseId: course._id, purchasedAt: new Date(), expiresAt: expiry(course.accessPeriodDays), source } },
-    { upsert: true, new: true, setDefaultsOnInsert: true, session }
-  );
+  const identity = { tenantId, studentId, courseId: course._id };
+  const now = new Date();
+  const expiresAt = expiry(course.accessPeriodDays);
+  const existing = await CourseEnrollment.findOne(identity).session(session);
+
+  if (existing) {
+    // Keep active access (and its original purchase window) idempotent. A
+    // re-purchase after expiry renews this unique row with a fresh window.
+    if (existing.expiresAt > now) return existing;
+    existing.purchasedAt = now;
+    existing.expiresAt = expiresAt;
+    existing.source = source;
+    await existing.save({ session });
+    return existing;
+  }
+
+  return CourseEnrollment.create([{ ...identity, purchasedAt: now, expiresAt, source }], { session }).then(([created]) => created);
 }
 
 // LectureAccess is the pre-existing per-item access mechanism. Its legacy
