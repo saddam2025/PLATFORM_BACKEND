@@ -171,12 +171,13 @@ async function getEnrolledCoursesForStudent({ studentId, tenantFilter }) {
     for (const course of partialCourses) {
       if (coursesById.has(String(course._id))) continue;
       const ownedLectureIds = lecturesByCourse.get(String(course._id)) || [];
-      const firstAccess = accessRecords.find((access) => ownedLectureIds.includes(String(access.courseId)));
+      const ownedLectureAccesses = accessRecords.filter((access) => ownedLectureIds.includes(String(access.courseId)));
+      const firstAccess = ownedLectureAccesses[0];
       coursesById.set(String(course._id), {
         course,
         purchasedAt: firstAccess?.purchasedAt || now,
         expiresAt: firstAccess?.expiresAt || now,
-        viewsRemaining: null,
+        viewsRemaining: ownedLectureAccesses.reduce((total, access) => total + Math.max(0, access.maxViews - access.viewsUsed), 0),
         partialLectureCount: ownedLectureIds.length,
         fullAccess: false
       });
